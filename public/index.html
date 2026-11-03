@@ -17,7 +17,7 @@
         
         #qr-box { text-align: center; }
         #qr-img { width: 180px; height: 180px; margin: 10px 0; border: 1px solid #ddd; border-radius: 8px; }
-        .timer { font-size: 14px; color: #e67e22; font-weight: bold; }
+        .timer { font-size: 14px; color: #e67e22; font-weight: bold; margin: 5px 0; }
 
         .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 15px; margin-bottom: 20px; }
         .kpi-card { background: white; padding: 15px; border-radius: 10px; border-left: 5px solid #3498db; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
@@ -40,7 +40,7 @@
         .btn-primary { background: #3498db; color: white; }
         .btn-success { background: #27ae60; color: white; }
         .btn-danger { background: #e74c3c; color: white; padding: 5px 10px; font-size: 12px; }
-        .btn-map { background: #e67e22; color: white; padding: 3px 8px; font-size: 11px; border-radius: 4px; }
+        .btn-map { background: #e67e22; color: white; padding: 5px 10px; font-size: 12px; border-radius: 4px; }
         .btn-map:hover { background: #d35400; }
 
         .badge { padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: bold; }
@@ -48,6 +48,42 @@
         .badge-warning { background: #fff3cd; color: #856404; }
         .badge-danger { background: #f8d7da; color: #721c24; }
         .badge-info { background: #d1ecf1; color: #0c5460; }
+
+        /* TAM EKRAN MODAL STİLLERİ */
+        .fullscreen-modal {
+            position: fixed;
+            top: 0; left: 0; width: 100vw; height: 100vh;
+            background-color: #0f172a;
+            z-index: 9999;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            color: white;
+        }
+        .fullscreen-modal img {
+            width: 360px;
+            height: 360px;
+            background: white;
+            padding: 15px;
+            border-radius: 16px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.6);
+            margin: 20px 0;
+        }
+        .close-fs-btn {
+            position: absolute;
+            top: 25px;
+            right: 25px;
+            background: #e74c3c;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            font-size: 16px;
+            font-weight: bold;
+            border-radius: 8px;
+            cursor: pointer;
+        }
+        .close-fs-btn:hover { background: #c0392b; }
     </style>
 </head>
 <body>
@@ -57,9 +93,19 @@
         <!-- Üst Izgara -->
         <div class="grid">
             <div class="card" id="qr-box">
-                <div class="card-header"><h2>📌 Canlı Kapı QR Kodu</h2></div>
+                <div class="card-header">
+                    <h2>📌 Kapı QR Kodu</h2>
+                    <button class="btn btn-primary" onclick="openFullscreenQR()">🖥️ Tam Ekran Yap</button>
+                </div>
                 <img id="qr-img" src="" alt="QR Kod Yükleniyor...">
-                <div class="timer">Yenilenmesine: <span id="countdown">10</span> sn</div>
+                <div class="timer" id="timer-box">Yenilenmesine: <span id="countdown">10</span> sn</div>
+                
+                <div style="margin-top: 12px; display: flex; justify-content: center; align-items: center; gap: 15px; background: #f8f9fa; padding: 8px; border-radius: 8px;">
+                    <label style="font-size: 13px; font-weight: bold; cursor: pointer; display: flex; align-items: center; gap: 5px;">
+                        <input type="checkbox" id="auto-refresh-check" checked onchange="toggleAutoRefresh(this.checked)"> Otomatik Yenile (10 sn)
+                    </label>
+                    <button class="btn btn-map" onclick="loadQrCode()">🔄 Şimdi Yenile</button>
+                </div>
             </div>
 
             <div class="card">
@@ -167,19 +213,68 @@
         </div>
     </div>
 
+    <!-- TAM EKRAN KAPINIZ İÇİN KİOSK QR PENCERESİ -->
+    <div id="qr-fullscreen-modal" class="fullscreen-modal" style="display: none;">
+        <button class="close-fs-btn" onclick="closeFullscreenQR()">✖ Çıkış (Esc)</button>
+        <h2 style="font-size: 28px; color: #38bdf8;">📌 PDKS KAPI GİRİŞ & ÇIKIŞ QR KODU</h2>
+        <img id="qr-img-fs" src="" alt="Kiosk QR Kod">
+        <div class="timer" id="timer-box-fs" style="font-size: 20px; color: #fbbf24;">Yenilenmesine: <span id="countdown-fs">10</span> sn</div>
+        
+        <div style="margin-top: 20px; display: flex; align-items: center; gap: 20px; background: rgba(255,255,255,0.1); padding: 12px 24px; border-radius: 12px;">
+            <label style="font-size: 16px; font-weight: bold; cursor: pointer; display: flex; align-items: center; gap: 8px;">
+                <input type="checkbox" id="auto-refresh-check-fs" checked onchange="toggleAutoRefresh(this.checked)"> Otomatik Yenile (10 sn)
+            </label>
+            <button class="btn btn-primary" style="font-size: 15px; padding: 8px 16px;" onclick="loadQrCode()">🔄 Şimdi Yenile</button>
+        </div>
+    </div>
+
     <script>
         const API_BASE = window.location.origin;
         let countdownVal = 10;
+        let isAutoRefreshEnabled = true;
         let currentReportData = [];
 
         async function loadQrCode() {
             try {
                 const res = await fetch(`${API_BASE}/api/qr/generate`);
                 const data = await res.json();
-                document.getElementById('qr-img').src = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(data.qr_token)}`;
+                const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=360x360&data=${encodeURIComponent(data.qr_token)}`;
+                
+                document.getElementById('qr-img').src = qrUrl;
+                document.getElementById('qr-img-fs').src = qrUrl;
                 countdownVal = 10;
             } catch (e) { console.error("QR Hata", e); }
         }
+
+        function toggleAutoRefresh(enabled) {
+            isAutoRefreshEnabled = enabled;
+            document.getElementById('auto-refresh-check').checked = enabled;
+            document.getElementById('auto-refresh-check-fs').checked = enabled;
+
+            const timerBox = document.getElementById('timer-box');
+            const timerBoxFs = document.getElementById('timer-box-fs');
+
+            if (!enabled) {
+                timerBox.innerHTML = "<span>Otomatik Yenileme Durduruldu</span>";
+                timerBoxFs.innerHTML = "<span>Otomatik Yenileme Durduruldu</span>";
+            } else {
+                timerBox.innerHTML = 'Yenilenmesine: <span id="countdown">' + countdownVal + '</span> sn';
+                timerBoxFs.innerHTML = 'Yenilenmesine: <span id="countdown-fs">' + countdownVal + '</span> sn';
+                loadQrCode();
+            }
+        }
+
+        function openFullscreenQR() {
+            document.getElementById('qr-fullscreen-modal').style.display = 'flex';
+        }
+
+        function closeFullscreenQR() {
+            document.getElementById('qr-fullscreen-modal').style.display = 'none';
+        }
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') closeFullscreenQR();
+        });
 
         async function loadBranch() {
             try {
@@ -367,10 +462,19 @@
         loadUsers();
         loadReport();
 
+        // 1 saniyelik sayaç kontrolü
         setInterval(() => {
-            countdownVal--;
-            if (countdownVal <= 0) loadQrCode();
-            else document.getElementById('countdown').innerText = countdownVal;
+            if (isAutoRefreshEnabled) {
+                countdownVal--;
+                if (countdownVal <= 0) {
+                    loadQrCode();
+                } else {
+                    const cdEl = document.getElementById('countdown');
+                    const cdFsEl = document.getElementById('countdown-fs');
+                    if (cdEl) cdEl.innerText = countdownVal;
+                    if (cdFsEl) cdFsEl.innerText = countdownVal;
+                }
+            }
         }, 1000);
 
         setInterval(() => {
