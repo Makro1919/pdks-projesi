@@ -47,7 +47,6 @@ app.get('/api/seed', (req, res) => {
   res.json({ message: "Test verileri güncellendi!" });
 });
 
-// Cihaz UUID'ye Göre Kullanıcı ve Son Durum Bilgisi Getir
 app.get('/api/users/by-device/:uuid', (req, res) => {
   const query = `
     SELECT users.*, branches.name as branch_name,
@@ -74,7 +73,6 @@ app.get('/api/users', (req, res) => {
   });
 });
 
-// Hızlı Personel Kaydı
 app.post('/api/users/quick-register', (req, res) => {
   const { full_name, device_uuid } = req.body;
 
@@ -89,23 +87,15 @@ app.post('/api/users/quick-register', (req, res) => {
   `;
 
   db.run(query, [full_name, email, device_uuid], function(err) {
-    if (err) {
-      return res.status(500).json({ success: false, message: "Kayıt yapılırken hata oluştu." });
-    }
-
-    res.json({
-      success: true,
-      message: "Personel kaydı tamamlandı!",
-      user_id: this.lastID
-    });
+    if (err) return res.status(500).json({ success: false, message: "Kayıt hatası." });
+    res.json({ success: true, message: "Personel kaydı tamamlandı!", user_id: this.lastID });
   });
 });
 
 app.delete('/api/users/:id', (req, res) => {
   const userId = req.params.id;
-
-  db.run(`DELETE FROM attendance_logs WHERE user_id = ?`, [userId], (err) => {
-    db.run(`DELETE FROM users WHERE id = ?`, [userId], function(err) {
+  db.run(`DELETE FROM attendance_logs WHERE user_id = ?`, [userId], () => {
+    db.run(`DELETE FROM users WHERE id = ?`, [userId], (err) => {
       if (err) return res.status(500).json({ success: false, message: "Silinemedi." });
       res.json({ success: true, message: "Personel silindi." });
     });
@@ -117,14 +107,9 @@ app.get('/api/qr/generate', (req, res) => {
   const tokenData = `${timestamp}-${QR_SECRET}`;
   const token = crypto.createHash('sha256').update(tokenData).digest('hex');
 
-  res.json({
-    qr_token: token,
-    timestamp: timestamp,
-    expires_in_seconds: 10
-  });
+  res.json({ qr_token: token, timestamp: timestamp, expires_in_seconds: 10 });
 });
 
-// QR Tarama & Devam Doğrulama (Mükerrer Kayıt Engelli)
 app.post('/api/attendance/scan', (req, res) => {
   const { type, latitude, longitude, device_uuid } = req.body;
 
@@ -140,11 +125,8 @@ app.post('/api/attendance/scan', (req, res) => {
   `;
 
   db.get(userQuery, [device_uuid], (err, user) => {
-    if (err || !user) {
-      return res.status(404).json({ success: false, message: "Cihaz kayıtlı değil." });
-    }
+    if (err || !user) return res.status(404).json({ success: false, message: "Cihaz kayıtlı değil." });
 
-    // Mükerrer Giriş / Çıkış Kontrolü
     const lastLogQuery = `
       SELECT type FROM attendance_logs 
       WHERE user_id = ? AND status = 'APPROVED' 
@@ -163,25 +145,19 @@ app.post('/api/attendance/scan', (req, res) => {
         return res.status(400).json({ success: false, message: "HATA: Henüz giriş kaydınız yok. Önce giriş yapmalısınız." });
       }
 
-      // GPS Konum Doğrulaması
       const distance = getDistanceInMeters(latitude, longitude, user.branch_lat, user.branch_lng);
 
       if (distance > user.radius_meters) {
         db.run(`INSERT INTO attendance_logs (user_id, type, latitude, longitude, status, timestamp) VALUES (?, ?, ?, ?, 'REJECTED_LOCATION', DATETIME('now', '+3 hours'))`, 
           [user.id, type, latitude, longitude]);
-        return res.status(400).json({ 
-          success: false, 
-          message: `HATA: İş yerinin dışındasınız! (Mesafe: ${Math.round(distance)}m)` 
-        });
+        return res.status(400).json({ success: false, message: `HATA: İş yerinin dışındasınız! (${Math.round(distance)}m)` });
       }
 
-      // Başarılı Kayıt
       db.run(
         `INSERT INTO attendance_logs (user_id, type, latitude, longitude, status, timestamp) VALUES (?, ?, ?, ?, 'APPROVED', DATETIME('now', '+3 hours'))`,
         [user.id, type, latitude, longitude],
         function(err) {
           if (err) return res.status(500).json({ success: false, message: "Kayıt hatası." });
-          
           res.json({
             success: true,
             message: `${user.full_name} - ${type === 'CHECK_IN' ? 'GİRİŞ' : 'ÇIKIŞ'} Başarılı!`,
@@ -193,6 +169,106 @@ app.post('/api/attendance/scan', (req, res) => {
   });
 });
 
+// GELİŞMİŞ RAPORLAMA API'Sİ (Log Eşleştirme & Tarih Filtresi)
+app.get('/api/reports', (req, res) => {
+  const { start_date, end_date, user_id } = req.query;
+
+  let query = `
+    SELECT attendance_logs.*, users.full_name, users.email
+    FROM attendance_logs
+    JOIN users ON attendance_logs.user_id = users.id
+    WHERE attendance_logs.status = 'APPROVED'
+  `;
+  const params = [];
+
+  if (start_date) {
+    query += ` AND DATE(attendance_logs.timestamp) >= ?`;
+    params.push(start_date);
+  }
+  if (end_date) {
+    query += ` AND DATE(attendance_logs.timestamp) <= ?`;
+    params.push(end_date);
+  }
+  if (user_id && user_id !== 'ALL') {
+    query += ` AND attendance_logs.user_id = ?`;
+    params.push(user_id);
+  }
+
+  query += ` ORDER BY attendance_logs.timestamp ASC`;
+
+  db.all(query, params, (err, rows) => {
+    if (err) return res.status(500).json({ error: err.message });
+
+    // Günlük Giriş/Çıkış Birleştirme Mantığı
+    const dailyMap = {};
+
+    rows.forEach(log => {
+      const dateStr = log.timestamp.split(' ')[0];
+      const key = `${log.user_id}_${dateStr}`;
+
+      if (!dailyMap[key]) {
+        dailyMap[key] = {
+          date: dateStr,
+          user_id: log.user_id,
+          full_name: log.full_name,
+          check_in: null,
+          check_out: null
+        };
+      }
+
+      if (log.type === 'CHECK_IN' && !dailyMap[key].check_in) {
+        dailyMap[key].check_in = log.timestamp;
+      } else if (log.type === 'CHECK_OUT') {
+        dailyMap[key].check_out = log.timestamp;
+      }
+    });
+
+    const reportData = Object.values(dailyMap).map(item => {
+      let workedMinutes = 0;
+      let lateMinutes = 0;
+      let earlyExitMinutes = 0;
+
+      if (item.check_in) {
+        const inTime = new Date(item.check_in.replace(' ', 'T'));
+        const shiftStart = new Date(inTime);
+        shiftStart.setHours(9, 0, 0, 0); // Mesai başlangıcı 09:00
+
+        if (inTime > shiftStart) {
+          const diff = Math.floor((inTime - shiftStart) / 60000);
+          if (diff > 15) { // 15 dakika tolerans
+            lateMinutes = diff;
+          }
+        }
+      }
+
+      if (item.check_out) {
+        const outTime = new Date(item.check_out.replace(' ', 'T'));
+        const shiftEnd = new Date(outTime);
+        shiftEnd.setHours(18, 0, 0, 0); // Mesai bitimi 18:00
+
+        if (outTime < shiftEnd) {
+          earlyExitMinutes = Math.floor((shiftEnd - outTime) / 60000);
+        }
+      }
+
+      if (item.check_in && item.check_out) {
+        const inTime = new Date(item.check_in.replace(' ', 'T'));
+        const outTime = new Date(item.check_out.replace(' ', 'T'));
+        workedMinutes = Math.max(0, Math.floor((outTime - inTime) / 60000));
+      }
+
+      return {
+        ...item,
+        worked_minutes: workedMinutes,
+        late_minutes: lateMinutes,
+        early_exit_minutes: earlyExitMinutes
+      };
+    });
+
+    res.json({ report: reportData.reverse() });
+  });
+});
+
 app.get('/api/attendance/logs', (req, res) => {
   const query = `
     SELECT attendance_logs.*, users.full_name, users.email 
@@ -200,7 +276,6 @@ app.get('/api/attendance/logs', (req, res) => {
     JOIN users ON attendance_logs.user_id = users.id 
     ORDER BY id DESC
   `;
-
   db.all(query, [], (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
     res.json({ logs: rows || [] });
