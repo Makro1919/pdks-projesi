@@ -29,26 +29,17 @@ function getDistanceInMeters(lat1, lon1, lat2, lon2) {
   return R * c;
 }
 
-// -------------------------------------------------------------
-// SUNUCU BAŞLADIĞINDA OTOMATİK VERİ YÜKLEME (AUTO-SEED)
-// -------------------------------------------------------------
 function autoSeedDatabase() {
   db.serialize(() => {
-    // INSERT OR REPLACE ile eski 50 metrelik kaydı 1.000.000 metre (1000 km) test sınırı ile eziyoruz
     db.run(`
       INSERT OR REPLACE INTO branches (id, name, latitude, longitude, radius_meters)
       VALUES (1, 'Merkez Ofis', 41.0082, 28.9784, 1000000)
-    `, (err) => {
-      if (err) console.error("Şube hatası:", err.message);
-    });
+    `);
 
     db.run(`
       INSERT OR REPLACE INTO users (id, full_name, email, role, device_uuid, branch_id)
       VALUES (1, 'Ahmet Yılmaz', 'ahmet@sirket.com', 'EMPLOYEE', 'AQ3A.250226.002', 1)
-    `, (err) => {
-      if (err) console.error("Kullanıcı hatası:", err.message);
-      else console.log("✅ Veritabanı 1000 km test yarıçapı ile başarıyla güncellendi!");
-    });
+    `);
   });
 }
 
@@ -56,13 +47,11 @@ function autoSeedDatabase() {
 // ROTALAR
 // -------------------------------------------------------------
 
-// Manuel seed endpoint'i
 app.get('/api/seed', (req, res) => {
   autoSeedDatabase();
-  res.json({ message: "Test verileri 1000 km yarıçap ile güncellendi!", device_uuid: 'AQ3A.250226.002' });
+  res.json({ message: "Test verileri güncellendi!" });
 });
 
-// Tüm Şubeleri Listele
 app.get('/api/branches', (req, res) => {
   db.all('SELECT * FROM branches', [], (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
@@ -70,7 +59,6 @@ app.get('/api/branches', (req, res) => {
   });
 });
 
-// Tüm Personelleri Listele
 app.get('/api/users', (req, res) => {
   const query = `
     SELECT users.*, branches.name as branch_name 
@@ -83,36 +71,37 @@ app.get('/api/users', (req, res) => {
   });
 });
 
-// Yeni Personel Ekle
-app.post('/api/users', (req, res) => {
-  const { full_name, email, role, device_uuid, branch_id } = req.body;
+// Hızlı Personel Kaydı (Mobil Uygulama İle Doğrudan İsim Girerek Kayıt)
+app.post('/api/users/quick-register', (req, res) => {
+  const { full_name, device_uuid } = req.body;
 
-  if (!full_name || !email || !branch_id) {
-    return res.status(400).json({ success: false, message: "Ad Soyad, E-posta ve Şube zorunludur." });
+  if (!full_name || !device_uuid) {
+    return res.status(400).json({ success: false, message: "İsim ve Cihaz Kimliği zorunludur." });
   }
 
+  const email = `user_${Date.now()}@pdks.local`;
   const query = `
     INSERT INTO users (full_name, email, role, device_uuid, branch_id)
-    VALUES (?, ?, ?, ?, ?)
+    VALUES (?, ?, 'EMPLOYEE', ?, 1)
   `;
 
-  db.run(query, [full_name, email, role || 'EMPLOYEE', device_uuid, branch_id], function(err) {
+  db.run(query, [full_name, email, device_uuid], function(err) {
     if (err) {
-      if (err.message.includes('UNIQUE constraint failed')) {
-        return res.status(400).json({ success: false, message: "Bu e-posta adresi zaten kayıtlı!" });
-      }
-      return res.status(500).json({ success: false, message: "Personel eklenirken hata oluştu." });
+      return res.status(500).json({ success: false, message: "Kayıt yapılırken hata oluştu." });
     }
 
     res.json({
       success: true,
-      message: `${full_name} sisteme başarıyla eklendi!`,
-      user_id: this.lastID
+      message: "Personel başarıyla kaydedildi!",
+      user: {
+        id: this.lastID,
+        full_name: full_name,
+        device_uuid: device_uuid
+      }
     });
   });
 });
 
-// Dynamic QR Üretme
 app.get('/api/qr/generate', (req, res) => {
   const timestamp = Date.now();
   const tokenData = `${timestamp}-${QR_SECRET}`;
@@ -125,7 +114,7 @@ app.get('/api/qr/generate', (req, res) => {
   });
 });
 
-// QR Tarama & Devam Doğrulama
+// QR Tarama & Devam Doğrulama (+3 Saat Dilimi Düzeltmesi İle)
 app.post('/api/attendance/scan', (req, res) => {
   const { user_id, type, latitude, longitude, device_uuid } = req.body;
 
@@ -151,7 +140,7 @@ app.post('/api/attendance/scan', (req, res) => {
     }
 
     if (user.device_uuid && user.device_uuid !== device_uuid) {
-      db.run(`INSERT INTO attendance_logs (user_id, type, latitude, longitude, status) VALUES (?, ?, ?, ?, 'REJECTED_DEVICE')`, 
+      db.run(`INSERT INTO attendance_logs (user_id, type, latitude, longitude, status, timestamp) VALUES (?, ?, ?, ?, 'REJECTED_DEVICE', DATETIME('now', '+3 hours'))`, 
         [user_id, type, latitude, longitude]);
       return res.status(403).json({ success: false, message: "HATA: Tanımsız cihaz! Kendi telefonunuzdan giriş yapmalısınız." });
     }
@@ -159,7 +148,7 @@ app.post('/api/attendance/scan', (req, res) => {
     const distance = getDistanceInMeters(latitude, longitude, user.branch_lat, user.branch_lng);
 
     if (distance > user.radius_meters) {
-      db.run(`INSERT INTO attendance_logs (user_id, type, latitude, longitude, status) VALUES (?, ?, ?, ?, 'REJECTED_LOCATION')`, 
+      db.run(`INSERT INTO attendance_logs (user_id, type, latitude, longitude, status, timestamp) VALUES (?, ?, ?, ?, 'REJECTED_LOCATION', DATETIME('now', '+3 hours'))`, 
         [user_id, type, latitude, longitude]);
       return res.status(400).json({ 
         success: false, 
@@ -167,8 +156,9 @@ app.post('/api/attendance/scan', (req, res) => {
       });
     }
 
+    // Türkiye Saati (+3 saat) ile log kaydı ekleme
     db.run(
-      `INSERT INTO attendance_logs (user_id, type, latitude, longitude, status) VALUES (?, ?, ?, ?, 'APPROVED')`,
+      `INSERT INTO attendance_logs (user_id, type, latitude, longitude, status, timestamp) VALUES (?, ?, ?, ?, 'APPROVED', DATETIME('now', '+3 hours'))`,
       [user_id, type, latitude, longitude],
       function(err) {
         if (err) return res.status(500).json({ success: false, message: "Kayıt oluşturulurken hata." });
@@ -183,13 +173,12 @@ app.post('/api/attendance/scan', (req, res) => {
   });
 });
 
-// Kayıtları Listele
 app.get('/api/attendance/logs', (req, res) => {
   const query = `
     SELECT attendance_logs.*, users.full_name, users.email 
     FROM attendance_logs 
     JOIN users ON attendance_logs.user_id = users.id 
-    ORDER BY timestamp DESC
+    ORDER BY id DESC
   `;
 
   db.all(query, [], (err, rows) => {
