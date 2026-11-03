@@ -33,19 +33,27 @@ function getDistanceInMeters(lat1, lon1, lat2, lon2) {
 // ŞUBE VEYA TEST VERİSİ ROTALARI
 // -------------------------------------------------------------
 app.get('/api/seed', (req, res) => {
-  db.run(`
-    INSERT INTO branches (name, latitude, longitude, radius_meters)
-    VALUES ('Merkez Ofis', 41.0082, 28.9784, 50)
-  `, function(err) {
-    if (err) return res.status(500).json({ error: "Şube zaten var veya eklenemedi." });
-    
-    const branchId = this.lastID;
+  // Önceki test verilerini temizle
+  db.serialize(() => {
+    db.run(`DELETE FROM attendance_logs`);
+    db.run(`DELETE FROM users`);
+    db.run(`DELETE FROM branches`);
+
     db.run(`
-      INSERT INTO users (full_name, email, role, device_uuid, branch_id)
-      VALUES ('Ahmet Yılmaz', 'ahmet@sirket.com', 'EMPLOYEE', 'PHONE-UUID-12345', ?)
-    `, [branchId], function(err) {
-      if (err) return res.status(500).json({ error: "Personel eklenemedi." });
-      res.json({ message: "Test verileri başarıyla yüklendi!", branch_id: branchId, user_id: this.lastID });
+      INSERT INTO branches (name, latitude, longitude, radius_meters)
+      VALUES ('Merkez Ofis', 41.0082, 28.9784, 50)
+    `, function(err) {
+      if (err) return res.status(500).json({ error: "Şube eklenemedi: " + err.message });
+      
+      const branchId = this.lastID;
+      // Cihaz UUID'si senin telefonun (AQ3A.250226.002) olarak güncellendi
+      db.run(`
+        INSERT INTO users (full_name, email, role, device_uuid, branch_id)
+        VALUES ('Ahmet Yılmaz', 'ahmet@sirket.com', 'EMPLOYEE', 'AQ3A.250226.002', ?)
+      `, [branchId], function(err) {
+        if (err) return res.status(500).json({ error: "Personel eklenemedi: " + err.message });
+        res.json({ message: "Test verileri başarıyla güncellendi!", branch_id: branchId, user_id: this.lastID, device_uuid: 'AQ3A.250226.002' });
+      });
     });
   });
 });
@@ -59,10 +67,8 @@ app.get('/api/branches', (req, res) => {
 });
 
 // -------------------------------------------------------------
-// PERSONEL YÖNETİM ROTALARI (EKLEME & LİSTELEME)
+// PERSONEL YÖNETİM ROTALARI
 // -------------------------------------------------------------
-
-// Tüm Personelleri Listele
 app.get('/api/users', (req, res) => {
   const query = `
     SELECT users.*, branches.name as branch_name 
@@ -75,7 +81,6 @@ app.get('/api/users', (req, res) => {
   });
 });
 
-// Yeni Personel Ekle
 app.post('/api/users', (req, res) => {
   const { full_name, email, role, device_uuid, branch_id } = req.body;
 
@@ -138,6 +143,13 @@ app.post('/api/attendance/scan', (req, res) => {
       return res.status(404).json({ success: false, message: "Kullanıcı veya şube bulunamadı." });
     }
 
+    // Eğer kullanıcının henüz cihaz kaydı yoksa gelen cihazı otomatik eşleştir
+    if (!user.device_uuid) {
+      db.run(`UPDATE users SET device_uuid = ? WHERE id = ?`, [device_uuid, user_id]);
+      user.device_uuid = device_uuid;
+    }
+
+    // Cihaz doğrulama kontrolü
     if (user.device_uuid && user.device_uuid !== device_uuid) {
       db.run(`INSERT INTO attendance_logs (user_id, type, latitude, longitude, status) VALUES (?, ?, ?, ?, 'REJECTED_DEVICE')`, 
         [user_id, type, latitude, longitude]);
