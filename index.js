@@ -29,11 +29,12 @@ function getDistanceInMeters(lat1, lon1, lat2, lon2) {
   return R * c;
 }
 
+// Mesafe sınırı 50 metreye ayarlandı
 function autoSeedDatabase() {
   db.serialize(() => {
     db.run(`
       INSERT OR REPLACE INTO branches (id, name, latitude, longitude, radius_meters)
-      VALUES (1, 'Merkez Ofis', 41.0082, 28.9784, 1000000)
+      VALUES (1, 'Merkez Ofis', 41.0082, 28.9784, 50)
     `);
   });
 }
@@ -44,7 +45,7 @@ function autoSeedDatabase() {
 
 app.get('/api/seed', (req, res) => {
   autoSeedDatabase();
-  res.json({ message: "Test verileri güncellendi!" });
+  res.json({ message: "Test verileri 50m yarıçap ile güncellendi!" });
 });
 
 app.get('/api/users/by-device/:uuid', (req, res) => {
@@ -150,7 +151,10 @@ app.post('/api/attendance/scan', (req, res) => {
       if (distance > user.radius_meters) {
         db.run(`INSERT INTO attendance_logs (user_id, type, latitude, longitude, status, timestamp) VALUES (?, ?, ?, ?, 'REJECTED_LOCATION', DATETIME('now', '+3 hours'))`, 
           [user.id, type, latitude, longitude]);
-        return res.status(400).json({ success: false, message: `HATA: İş yerinin dışındasınız! (${Math.round(distance)}m)` });
+        return res.status(400).json({ 
+          success: false, 
+          message: `HATA: İş yerinin dışındasınız! (Mesafe: ${Math.round(distance)}m. Sınır: ${user.radius_meters}m)` 
+        });
       }
 
       db.run(
@@ -169,103 +173,125 @@ app.post('/api/attendance/scan', (req, res) => {
   });
 });
 
-// GELİŞMİŞ RAPORLAMA API'Sİ (Log Eşleştirme & Tarih Filtresi)
+// GELİŞMİŞ RAPORLAMA API'Sİ (İçeridekiler Sayısı & GPS Koordinatları İle)
 app.get('/api/reports', (req, res) => {
   const { start_date, end_date, user_id } = req.query;
 
-  let query = `
-    SELECT attendance_logs.*, users.full_name, users.email
-    FROM attendance_logs
-    JOIN users ON attendance_logs.user_id = users.id
-    WHERE attendance_logs.status = 'APPROVED'
+  // Anlık İçerideki Kişi Sayısı Hesabı
+  const insideCountQuery = `
+    SELECT COUNT(*) as inside_count FROM (
+      SELECT user_id, type 
+      FROM attendance_logs 
+      WHERE status = 'APPROVED' 
+      ORDER BY id DESC
+    ) GROUP BY user_id HAVING type = 'CHECK_IN'
   `;
-  const params = [];
 
-  if (start_date) {
-    query += ` AND DATE(attendance_logs.timestamp) >= ?`;
-    params.push(start_date);
-  }
-  if (end_date) {
-    query += ` AND DATE(attendance_logs.timestamp) <= ?`;
-    params.push(end_date);
-  }
-  if (user_id && user_id !== 'ALL') {
-    query += ` AND attendance_logs.user_id = ?`;
-    params.push(user_id);
-  }
+  db.all(insideCountQuery, [], (err, insideRows) => {
+    const currentlyInsideCount = insideRows ? insideRows.length : 0;
 
-  query += ` ORDER BY attendance_logs.timestamp ASC`;
+    let query = `
+      SELECT attendance_logs.*, users.full_name, users.email
+      FROM attendance_logs
+      JOIN users ON attendance_logs.user_id = users.id
+      WHERE attendance_logs.status = 'APPROVED'
+    `;
+    const params = [];
 
-  db.all(query, params, (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
+    if (start_date) {
+      query += ` AND DATE(attendance_logs.timestamp) >= ?`;
+      params.push(start_date);
+    }
+    if (end_date) {
+      query += ` AND DATE(attendance_logs.timestamp) <= ?`;
+      params.push(end_date);
+    }
+    if (user_id && user_id !== 'ALL') {
+      query += ` AND attendance_logs.user_id = ?`;
+      params.push(user_id);
+    }
 
-    // Günlük Giriş/Çıkış Birleştirme Mantığı
-    const dailyMap = {};
+    query += ` ORDER BY attendance_logs.timestamp ASC`;
 
-    rows.forEach(log => {
-      const dateStr = log.timestamp.split(' ')[0];
-      const key = `${log.user_id}_${dateStr}`;
+    db.all(query, params, (err, rows) => {
+      if (err) return res.status(500).json({ error: err.message });
 
-      if (!dailyMap[key]) {
-        dailyMap[key] = {
-          date: dateStr,
-          user_id: log.user_id,
-          full_name: log.full_name,
-          check_in: null,
-          check_out: null
-        };
-      }
+      const dailyMap = {};
 
-      if (log.type === 'CHECK_IN' && !dailyMap[key].check_in) {
-        dailyMap[key].check_in = log.timestamp;
-      } else if (log.type === 'CHECK_OUT') {
-        dailyMap[key].check_out = log.timestamp;
-      }
-    });
+      rows.forEach(log => {
+        const dateStr = log.timestamp.split(' ')[0];
+        const key = `${log.user_id}_${dateStr}`;
 
-    const reportData = Object.values(dailyMap).map(item => {
-      let workedMinutes = 0;
-      let lateMinutes = 0;
-      let earlyExitMinutes = 0;
+        if (!dailyMap[key]) {
+          dailyMap[key] = {
+            date: dateStr,
+            user_id: log.user_id,
+            full_name: log.full_name,
+            check_in: null,
+            check_out: null,
+            in_lat: null,
+            in_lng: null,
+            out_lat: null,
+            out_lng: null
+          };
+        }
 
-      if (item.check_in) {
-        const inTime = new Date(item.check_in.replace(' ', 'T'));
-        const shiftStart = new Date(inTime);
-        shiftStart.setHours(9, 0, 0, 0); // Mesai başlangıcı 09:00
+        if (log.type === 'CHECK_IN' && !dailyMap[key].check_in) {
+          dailyMap[key].check_in = log.timestamp;
+          dailyMap[key].in_lat = log.latitude;
+          dailyMap[key].in_lng = log.longitude;
+        } else if (log.type === 'CHECK_OUT') {
+          dailyMap[key].check_out = log.timestamp;
+          dailyMap[key].out_lat = log.latitude;
+          dailyMap[key].out_lng = log.longitude;
+        }
+      });
 
-        if (inTime > shiftStart) {
-          const diff = Math.floor((inTime - shiftStart) / 60000);
-          if (diff > 15) { // 15 dakika tolerans
-            lateMinutes = diff;
+      const reportData = Object.values(dailyMap).map(item => {
+        let workedMinutes = 0;
+        let lateMinutes = 0;
+        let earlyExitMinutes = 0;
+
+        if (item.check_in) {
+          const inTime = new Date(item.check_in.replace(' ', 'T'));
+          const shiftStart = new Date(inTime);
+          shiftStart.setHours(9, 0, 0, 0);
+
+          if (inTime > shiftStart) {
+            const diff = Math.floor((inTime - shiftStart) / 60000);
+            if (diff > 15) lateMinutes = diff;
           }
         }
-      }
 
-      if (item.check_out) {
-        const outTime = new Date(item.check_out.replace(' ', 'T'));
-        const shiftEnd = new Date(outTime);
-        shiftEnd.setHours(18, 0, 0, 0); // Mesai bitimi 18:00
+        if (item.check_out) {
+          const outTime = new Date(item.check_out.replace(' ', 'T'));
+          const shiftEnd = new Date(outTime);
+          shiftEnd.setHours(18, 0, 0, 0);
 
-        if (outTime < shiftEnd) {
-          earlyExitMinutes = Math.floor((shiftEnd - outTime) / 60000);
+          if (outTime < shiftEnd) {
+            earlyExitMinutes = Math.floor((shiftEnd - outTime) / 60000);
+          }
         }
-      }
 
-      if (item.check_in && item.check_out) {
-        const inTime = new Date(item.check_in.replace(' ', 'T'));
-        const outTime = new Date(item.check_out.replace(' ', 'T'));
-        workedMinutes = Math.max(0, Math.floor((outTime - inTime) / 60000));
-      }
+        if (item.check_in && item.check_out) {
+          const inTime = new Date(item.check_in.replace(' ', 'T'));
+          const outTime = new Date(item.check_out.replace(' ', 'T'));
+          workedMinutes = Math.max(0, Math.floor((outTime - inTime) / 60000));
+        }
 
-      return {
-        ...item,
-        worked_minutes: workedMinutes,
-        late_minutes: lateMinutes,
-        early_exit_minutes: earlyExitMinutes
-      };
+        return {
+          ...item,
+          worked_minutes: workedMinutes,
+          late_minutes: lateMinutes,
+          early_exit_minutes: earlyExitMinutes
+        };
+      });
+
+      res.json({ 
+        currently_inside_count: currentlyInsideCount,
+        report: reportData.reverse() 
+      });
     });
-
-    res.json({ report: reportData.reverse() });
   });
 });
 
