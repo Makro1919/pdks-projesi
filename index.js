@@ -41,7 +41,7 @@ function autoSeedDatabase() {
 
     db.run(`
       INSERT INTO branches (id, name, latitude, longitude, radius_meters)
-      VALUES (1, 'Merkez Ofis', 41.0082, 28.9784, 50000)
+      VALUES (1, 'Merkez Ofis', 41.0082, 28.9784, 500000)
     `, function(err) {
       if (!err) {
         db.run(`
