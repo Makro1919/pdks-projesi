@@ -34,31 +34,31 @@ function autoSeedDatabase() {
     db.run(`
       INSERT OR REPLACE INTO branches (id, name, latitude, longitude, radius_meters)
       VALUES (1, 'Merkez Ofis', 41.0082, 28.9784, 1000000)
-    `, (err) => {
-      if (err) console.error("Branch Seed Hata:", err.message);
-    });
-
-    db.run(`
-      INSERT OR REPLACE INTO users (id, full_name, email, role, device_uuid, branch_id)
-      VALUES (1, 'Ahmet Yılmaz', 'ahmet@sirket.com', 'EMPLOYEE', 'AQ3A.250226.002', 1)
-    `, (err) => {
-      if (err) console.error("User Seed Hata:", err.message);
-      else console.log("✅ Veritabanı test verileri hazır.");
-    });
+    `);
   });
 }
 
+// -------------------------------------------------------------
 // ROTALAR
+// -------------------------------------------------------------
 
 app.get('/api/seed', (req, res) => {
   autoSeedDatabase();
-  res.json({ message: "Test verileri yüklendi!" });
+  res.json({ message: "Test verileri güncellendi!" });
 });
 
-app.get('/api/branches', (req, res) => {
-  db.all('SELECT * FROM branches', [], (err, rows) => {
+// Cihaz UUID'ye Göre Kullanıcı ve Son Durum Bilgisi Getir
+app.get('/api/users/by-device/:uuid', (req, res) => {
+  const query = `
+    SELECT users.*, branches.name as branch_name,
+      (SELECT type FROM attendance_logs WHERE user_id = users.id AND status = 'APPROVED' ORDER BY id DESC LIMIT 1) as last_type
+    FROM users 
+    LEFT JOIN branches ON users.branch_id = branches.id
+    WHERE users.device_uuid = ?
+  `;
+  db.get(query, [req.params.uuid], (err, row) => {
     if (err) return res.status(500).json({ error: err.message });
-    res.json({ branches: rows || [] });
+    res.json({ user: row || null });
   });
 });
 
@@ -74,6 +74,7 @@ app.get('/api/users', (req, res) => {
   });
 });
 
+// Hızlı Personel Kaydı
 app.post('/api/users/quick-register', (req, res) => {
   const { full_name, device_uuid } = req.body;
 
@@ -94,12 +95,8 @@ app.post('/api/users/quick-register', (req, res) => {
 
     res.json({
       success: true,
-      message: "Personel başarıyla kaydedildi!",
-      user: {
-        id: this.lastID,
-        full_name: full_name,
-        device_uuid: device_uuid
-      }
+      message: "Personel kaydı tamamlandı!",
+      user_id: this.lastID
     });
   });
 });
@@ -108,13 +105,9 @@ app.delete('/api/users/:id', (req, res) => {
   const userId = req.params.id;
 
   db.run(`DELETE FROM attendance_logs WHERE user_id = ?`, [userId], (err) => {
-    if (err) console.error("Log silme hatası:", err.message);
-
     db.run(`DELETE FROM users WHERE id = ?`, [userId], function(err) {
-      if (err) {
-        return res.status(500).json({ success: false, message: "Personel silinemedi." });
-      }
-      res.json({ success: true, message: "Personel başarıyla silindi." });
+      if (err) return res.status(500).json({ success: false, message: "Silinemedi." });
+      res.json({ success: true, message: "Personel silindi." });
     });
   });
 });
@@ -131,60 +124,72 @@ app.get('/api/qr/generate', (req, res) => {
   });
 });
 
+// QR Tarama & Devam Doğrulama (Mükerrer Kayıt Engelli)
 app.post('/api/attendance/scan', (req, res) => {
-  const { user_id, type, latitude, longitude, device_uuid } = req.body;
+  const { type, latitude, longitude, device_uuid } = req.body;
 
-  if (!user_id || !type || !latitude || !longitude || !device_uuid) {
+  if (!type || !latitude || !longitude || !device_uuid) {
     return res.status(400).json({ success: false, message: "Eksik bilgi gönderildi." });
   }
 
-  const query = `
+  const userQuery = `
     SELECT users.*, branches.latitude as branch_lat, branches.longitude as branch_lng, branches.radius_meters 
     FROM users 
     JOIN branches ON users.branch_id = branches.id 
-    WHERE users.id = ?
+    WHERE users.device_uuid = ?
   `;
 
-  db.get(query, [user_id], (err, user) => {
+  db.get(userQuery, [device_uuid], (err, user) => {
     if (err || !user) {
-      return res.status(404).json({ success: false, message: "Kullanıcı veya şube bulunamadı." });
+      return res.status(404).json({ success: false, message: "Cihaz kayıtlı değil." });
     }
 
-    if (!user.device_uuid) {
-      db.run(`UPDATE users SET device_uuid = ? WHERE id = ?`, [device_uuid, user_id]);
-      user.device_uuid = device_uuid;
-    }
+    // Mükerrer Giriş / Çıkış Kontrolü
+    const lastLogQuery = `
+      SELECT type FROM attendance_logs 
+      WHERE user_id = ? AND status = 'APPROVED' 
+      ORDER BY id DESC LIMIT 1
+    `;
 
-    if (user.device_uuid && user.device_uuid !== device_uuid) {
-      db.run(`INSERT INTO attendance_logs (user_id, type, latitude, longitude, status, timestamp) VALUES (?, ?, ?, ?, 'REJECTED_DEVICE', DATETIME('now', '+3 hours'))`, 
-        [user_id, type, latitude, longitude]);
-      return res.status(403).json({ success: false, message: "HATA: Tanımsız cihaz! Kendi telefonunuzdan giriş yapmalısınız." });
-    }
+    db.get(lastLogQuery, [user.id], (err, lastLog) => {
+      if (lastLog) {
+        if (lastLog.type === type) {
+          const warnMsg = type === 'CHECK_IN' 
+            ? "HATA: Zaten giriş yapılmış! Önce çıkış yapmalısınız."
+            : "HATA: Zaten çıkış yapılmış! Önce giriş yapmalısınız.";
+          return res.status(400).json({ success: false, message: warnMsg });
+        }
+      } else if (type === 'CHECK_OUT') {
+        return res.status(400).json({ success: false, message: "HATA: Henüz giriş kaydınız yok. Önce giriş yapmalısınız." });
+      }
 
-    const distance = getDistanceInMeters(latitude, longitude, user.branch_lat, user.branch_lng);
+      // GPS Konum Doğrulaması
+      const distance = getDistanceInMeters(latitude, longitude, user.branch_lat, user.branch_lng);
 
-    if (distance > user.radius_meters) {
-      db.run(`INSERT INTO attendance_logs (user_id, type, latitude, longitude, status, timestamp) VALUES (?, ?, ?, ?, 'REJECTED_LOCATION', DATETIME('now', '+3 hours'))`, 
-        [user_id, type, latitude, longitude]);
-      return res.status(400).json({ 
-        success: false, 
-        message: `HATA: İş yerinin dışındasınız! (Mesafe: ${Math.round(distance)} metre. Sınır: ${user.radius_meters}m)` 
-      });
-    }
-
-    db.run(
-      `INSERT INTO attendance_logs (user_id, type, latitude, longitude, status, timestamp) VALUES (?, ?, ?, ?, 'APPROVED', DATETIME('now', '+3 hours'))`,
-      [user_id, type, latitude, longitude],
-      function(err) {
-        if (err) return res.status(500).json({ success: false, message: "Kayıt oluşturulurken hata." });
-        
-        res.json({
-          success: true,
-          message: `${user.full_name} için ${type === 'CHECK_IN' ? 'GİRİŞ' : 'ÇIKIŞ'} işlemi başarılı!`,
-          distance_meters: Math.round(distance)
+      if (distance > user.radius_meters) {
+        db.run(`INSERT INTO attendance_logs (user_id, type, latitude, longitude, status, timestamp) VALUES (?, ?, ?, ?, 'REJECTED_LOCATION', DATETIME('now', '+3 hours'))`, 
+          [user.id, type, latitude, longitude]);
+        return res.status(400).json({ 
+          success: false, 
+          message: `HATA: İş yerinin dışındasınız! (Mesafe: ${Math.round(distance)}m)` 
         });
       }
-    );
+
+      // Başarılı Kayıt
+      db.run(
+        `INSERT INTO attendance_logs (user_id, type, latitude, longitude, status, timestamp) VALUES (?, ?, ?, ?, 'APPROVED', DATETIME('now', '+3 hours'))`,
+        [user.id, type, latitude, longitude],
+        function(err) {
+          if (err) return res.status(500).json({ success: false, message: "Kayıt hatası." });
+          
+          res.json({
+            success: true,
+            message: `${user.full_name} - ${type === 'CHECK_IN' ? 'GİRİŞ' : 'ÇIKIŞ'} Başarılı!`,
+            distance_meters: Math.round(distance)
+          });
+        }
+      );
+    });
   });
 });
 
