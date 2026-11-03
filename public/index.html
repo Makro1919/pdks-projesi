@@ -30,7 +30,7 @@
         <h1>📌 PDKS Yönetim Paneli</h1>
 
         <div class="grid">
-            <!-- QR Kod Ekranı -->
+            <!-- Canlı QR Kod -->
             <div class="card" id="qr-box">
                 <h2>📌 Canlı Kapı QR Kodu</h2>
                 <img id="qr-img" src="" alt="QR Kod Yükleniyor...">
@@ -39,7 +39,7 @@
 
             <!-- Kayıtlı Personel Listesi & Silme -->
             <div class="card">
-                <h2>👥 Kayıtlı Personel Listesi</h2>
+                <h2>👥 Kayıtlı Personeller</h2>
                 <table>
                     <thead>
                         <tr>
@@ -75,7 +75,7 @@
     </div>
 
     <script>
-        const API_BASE = 'https://pdks-projesi-4wva.onrender.com';
+        const API_BASE = window.location.origin;
         let countdownVal = 10;
 
         async function loadQrCode() {
@@ -117,7 +117,7 @@
         }
 
         async function deleteUser(id, name) {
-            if (!confirm(`${name} isimli personeli ve tüm kayıtlarını silmek istediğinize emin misiniz?`)) return;
+            if (!confirm(`${name} isimli personeli silmek istediğinize emin misiniz?`)) return;
 
             try {
                 const res = await fetch(`${API_BASE}/api/users/${id}`, { method: 'DELETE' });
@@ -176,6 +176,7 @@
         }, 1000);
 
         setInterval(() => {
+            loadUsers();
             loadLogs();
         }, 5000);
     </script>
