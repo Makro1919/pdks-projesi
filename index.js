@@ -30,32 +30,41 @@ function getDistanceInMeters(lat1, lon1, lat2, lon2) {
 }
 
 // -------------------------------------------------------------
-// ŞUBE VEYA TEST VERİSİ ROTALARI
+// SUNUCU BAŞLADIĞINDA OTOMATİK VERİ YÜKLEME (AUTO-SEED)
 // -------------------------------------------------------------
-app.get('/api/seed', (req, res) => {
-  // Önceki test verilerini temizle
+function autoSeedDatabase() {
   db.serialize(() => {
+    // Tabloları temizle ve test verilerini otomatik ekle
     db.run(`DELETE FROM attendance_logs`);
     db.run(`DELETE FROM users`);
     db.run(`DELETE FROM branches`);
 
     db.run(`
-      INSERT INTO branches (name, latitude, longitude, radius_meters)
-      VALUES ('Merkez Ofis', 41.0082, 28.9784, 50)
+      INSERT INTO branches (id, name, latitude, longitude, radius_meters)
+      VALUES (1, 'Merkez Ofis', 41.0082, 28.9784, 50)
     `, function(err) {
-      if (err) return res.status(500).json({ error: "Şube eklenemedi: " + err.message });
-      
-      const branchId = this.lastID;
-      // Cihaz UUID'si senin telefonun (AQ3A.250226.002) olarak güncellendi
-      db.run(`
-        INSERT INTO users (full_name, email, role, device_uuid, branch_id)
-        VALUES ('Ahmet Yılmaz', 'ahmet@sirket.com', 'EMPLOYEE', 'AQ3A.250226.002', ?)
-      `, [branchId], function(err) {
-        if (err) return res.status(500).json({ error: "Personel eklenemedi: " + err.message });
-        res.json({ message: "Test verileri başarıyla güncellendi!", branch_id: branchId, user_id: this.lastID, device_uuid: 'AQ3A.250226.002' });
-      });
+      if (!err) {
+        db.run(`
+          INSERT INTO users (id, full_name, email, role, device_uuid, branch_id)
+          VALUES (1, 'Ahmet Yılmaz', 'ahmet@sirket.com', 'EMPLOYEE', 'AQ3A.250226.002', 1)
+        `, function(err2) {
+          if (!err2) {
+            console.log("✅ Veritabanı otomatik olarak Ahmet Yılmaz ve cihaz kimliği ile dolduruldu!");
+          }
+        });
+      }
     });
   });
+}
+
+// -------------------------------------------------------------
+// ROTALAR
+// -------------------------------------------------------------
+
+// Manuel seed endpoint'i (ihtiyaç halinde)
+app.get('/api/seed', (req, res) => {
+  autoSeedDatabase();
+  res.json({ message: "Test verileri başarıyla yüklendi!", device_uuid: 'AQ3A.250226.002' });
 });
 
 // Tüm Şubeleri Listele
@@ -66,9 +75,7 @@ app.get('/api/branches', (req, res) => {
   });
 });
 
-// -------------------------------------------------------------
-// PERSONEL YÖNETİM ROTALARI
-// -------------------------------------------------------------
+// Tüm Personelleri Listele
 app.get('/api/users', (req, res) => {
   const query = `
     SELECT users.*, branches.name as branch_name 
@@ -81,6 +88,7 @@ app.get('/api/users', (req, res) => {
   });
 });
 
+// Yeni Personel Ekle
 app.post('/api/users', (req, res) => {
   const { full_name, email, role, device_uuid, branch_id } = req.body;
 
@@ -109,9 +117,7 @@ app.post('/api/users', (req, res) => {
   });
 });
 
-// -------------------------------------------------------------
-// QR KOD & DEVAM TAKİP ROTALARI
-// -------------------------------------------------------------
+// Dynamic QR Üretme
 app.get('/api/qr/generate', (req, res) => {
   const timestamp = Date.now();
   const tokenData = `${timestamp}-${QR_SECRET}`;
@@ -124,6 +130,7 @@ app.get('/api/qr/generate', (req, res) => {
   });
 });
 
+// QR Tarama & Devam Doğrulama
 app.post('/api/attendance/scan', (req, res) => {
   const { user_id, type, latitude, longitude, device_uuid } = req.body;
 
@@ -143,13 +150,11 @@ app.post('/api/attendance/scan', (req, res) => {
       return res.status(404).json({ success: false, message: "Kullanıcı veya şube bulunamadı." });
     }
 
-    // Eğer kullanıcının henüz cihaz kaydı yoksa gelen cihazı otomatik eşleştir
     if (!user.device_uuid) {
       db.run(`UPDATE users SET device_uuid = ? WHERE id = ?`, [device_uuid, user_id]);
       user.device_uuid = device_uuid;
     }
 
-    // Cihaz doğrulama kontrolü
     if (user.device_uuid && user.device_uuid !== device_uuid) {
       db.run(`INSERT INTO attendance_logs (user_id, type, latitude, longitude, status) VALUES (?, ?, ?, ?, 'REJECTED_DEVICE')`, 
         [user_id, type, latitude, longitude]);
@@ -183,6 +188,7 @@ app.post('/api/attendance/scan', (req, res) => {
   });
 });
 
+// Kayıtları Listele
 app.get('/api/attendance/logs', (req, res) => {
   const query = `
     SELECT attendance_logs.*, users.full_name, users.email 
@@ -199,4 +205,6 @@ app.get('/api/attendance/logs', (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`PDKS Sunucusu http://localhost:${PORT} adresinde aktif!`);
+  // Sunucu ayağa kalkar kalkmaz veritabanını doldur
+  autoSeedDatabase();
 });
