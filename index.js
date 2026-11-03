@@ -29,12 +29,12 @@ function getDistanceInMeters(lat1, lon1, lat2, lon2) {
   return R * c;
 }
 
-// Mesafe sınırı 50 metreye ayarlandı
+// Şube koordinatları ve 50 metre yarıçap varsayılan yapıldı
 function autoSeedDatabase() {
   db.serialize(() => {
     db.run(`
       INSERT OR REPLACE INTO branches (id, name, latitude, longitude, radius_meters)
-      VALUES (1, 'Merkez Ofis', 41.0082, 28.9784, 50)
+      VALUES (1, 'Merkez Ofis', 38.387817, 27.122817, 50)
     `);
   });
 }
@@ -45,7 +45,35 @@ function autoSeedDatabase() {
 
 app.get('/api/seed', (req, res) => {
   autoSeedDatabase();
-  res.json({ message: "Test verileri 50m yarıçap ile güncellendi!" });
+  res.json({ message: "Şube koordinatları (38.387817, 27.122817) ve 50m yarıçap güncellendi!" });
+});
+
+// Şube Bilgilerini Getir
+app.get('/api/branches', (req, res) => {
+  db.get('SELECT * FROM branches WHERE id = 1', [], (err, row) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json({ branch: row });
+  });
+});
+
+// Şube Konumunu Web Paneli Üzerinden Güncelle
+app.post('/api/branches/update', (req, res) => {
+  const { latitude, longitude, radius_meters } = req.body;
+
+  if (!latitude || !longitude) {
+    return res.status(400).json({ success: false, message: "Enlem ve Boylam zorunludur." });
+  }
+
+  const query = `
+    UPDATE branches 
+    SET latitude = ?, longitude = ?, radius_meters = ? 
+    WHERE id = 1
+  `;
+
+  db.run(query, [parseFloat(latitude), parseFloat(longitude), parseFloat(radius_meters || 50)], function(err) {
+    if (err) return res.status(500).json({ success: false, message: "Şube güncellenemedi." });
+    res.json({ success: true, message: "Şube konumu ve yarıçapı başarıyla güncellendi!" });
+  });
 });
 
 app.get('/api/users/by-device/:uuid', (req, res) => {
@@ -173,11 +201,9 @@ app.post('/api/attendance/scan', (req, res) => {
   });
 });
 
-// GELİŞMİŞ RAPORLAMA API'Sİ (İçeridekiler Sayısı & GPS Koordinatları İle)
 app.get('/api/reports', (req, res) => {
   const { start_date, end_date, user_id } = req.query;
 
-  // Anlık İçerideki Kişi Sayısı Hesabı
   const insideCountQuery = `
     SELECT COUNT(*) as inside_count FROM (
       SELECT user_id, type 

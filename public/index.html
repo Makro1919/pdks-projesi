@@ -19,7 +19,6 @@
         #qr-img { width: 180px; height: 180px; margin: 10px 0; border: 1px solid #ddd; border-radius: 8px; }
         .timer { font-size: 14px; color: #e67e22; font-weight: bold; }
 
-        /* KPI Kartları */
         .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 15px; margin-bottom: 20px; }
         .kpi-card { background: white; padding: 15px; border-radius: 10px; border-left: 5px solid #3498db; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
         .kpi-card.success { border-left-color: #2ecc71; }
@@ -28,7 +27,6 @@
         .kpi-title { font-size: 12px; color: #7f8c8d; text-transform: uppercase; font-weight: bold; }
         .kpi-value { font-size: 24px; font-weight: bold; color: #2c3e50; margin-top: 5px; }
 
-        /* Filtre Alanı */
         .filter-box { display: flex; flex-wrap: wrap; gap: 15px; align-items: center; background: #fff; padding: 15px; border-radius: 10px; margin-bottom: 15px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
         .filter-group { display: flex; flex-direction: column; gap: 5px; }
         .filter-group label { font-size: 12px; font-weight: bold; color: #555; }
@@ -81,6 +79,28 @@
             </div>
         </div>
 
+        <!-- ŞUBE KOORDİNAT GÜNCELLEME KARTI -->
+        <div class="card">
+            <div class="card-header"><h2>📍 Şube Konumu ve GPS Yarıçapı Ayarları</h2></div>
+            <div class="filter-box">
+                <div class="filter-group">
+                    <label>Enlem (Latitude):</label>
+                    <input type="text" id="branch-lat" placeholder="Örn: 38.387817">
+                </div>
+                <div class="filter-group">
+                    <label>Boylam (Longitude):</label>
+                    <input type="text" id="branch-lng" placeholder="Örn: 27.122817">
+                </div>
+                <div class="filter-group">
+                    <label>İzin Verilen Yarıçap (Metre):</label>
+                    <input type="number" id="branch-radius" value="50">
+                </div>
+                <div class="filter-group" style="align-self: flex-end;">
+                    <button class="btn btn-primary" onclick="updateBranchLocation()">💾 Konumu Kaydet</button>
+                </div>
+            </div>
+        </div>
+
         <!-- İstatistik Kartları (KPI) -->
         <div class="kpi-grid">
             <div class="kpi-card success">
@@ -108,7 +128,6 @@
                 <button class="btn btn-success" onclick="exportReportToCSV()">📥 Raporu İndir (.CSV)</button>
             </div>
 
-            <!-- Filtre Alanı -->
             <div class="filter-box">
                 <div class="filter-group">
                     <label>Başlangıç Tarihi:</label>
@@ -160,6 +179,43 @@
                 document.getElementById('qr-img').src = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(data.qr_token)}`;
                 countdownVal = 10;
             } catch (e) { console.error("QR Hata", e); }
+        }
+
+        async function loadBranch() {
+            try {
+                const res = await fetch(`${API_BASE}/api/branches`);
+                const data = await res.json();
+                if (data.branch) {
+                    document.getElementById('branch-lat').value = data.branch.latitude;
+                    document.getElementById('branch-lng').value = data.branch.longitude;
+                    document.getElementById('branch-radius').value = data.branch.radius_meters;
+                }
+            } catch (e) { console.error("Şube Yükleme Hata", e); }
+        }
+
+        async function updateBranchLocation() {
+            const lat = document.getElementById('branch-lat').value;
+            const lng = document.getElementById('branch-lng').value;
+            const radius = document.getElementById('branch-radius').value;
+
+            if (!lat || !lng) {
+                alert("Lütfen enlem ve boylam girin.");
+                return;
+            }
+
+            try {
+                const res = await fetch(`${API_BASE}/api/branches/update`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ latitude: lat, longitude: lng, radius_meters: radius })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    alert(data.message);
+                } else {
+                    alert("Hata: " + data.message);
+                }
+            } catch (e) { alert("Sunucuya erişilemedi."); }
         }
 
         async function loadUsers() {
@@ -214,7 +270,6 @@
                 const res = await fetch(url);
                 const data = await res.json();
                 
-                // Anlık İçerideki Kişi Sayısı
                 document.getElementById('kpi-inside-count').innerText = `${data.currently_inside_count || 0} Kişi`;
 
                 currentReportData = data.report || [];
@@ -258,7 +313,6 @@
                         statusBadges += `<span class="badge badge-info">İçeride</span>`;
                     }
 
-                    // Google Maps Buton Bağlantıları
                     let mapBtns = '';
                     if (r.in_lat && r.in_lng) {
                         mapBtns += `<a href="https://www.google.com/maps?q=${r.in_lat},${r.in_lng}" target="_blank" class="btn btn-map">📍 Giriş Konumu</a> `;
@@ -309,6 +363,7 @@
         }
 
         loadQrCode();
+        loadBranch();
         loadUsers();
         loadReport();
 
