@@ -34,25 +34,20 @@ function getDistanceInMeters(lat1, lon1, lat2, lon2) {
 // -------------------------------------------------------------
 function autoSeedDatabase() {
   db.serialize(() => {
-    // Tabloları temizle ve test verilerini otomatik ekle
-    db.run(`DELETE FROM attendance_logs`);
-    db.run(`DELETE FROM users`);
-    db.run(`DELETE FROM branches`);
+    // INSERT OR REPLACE ile eski 50 metrelik kaydı 1.000.000 metre (1000 km) test sınırı ile eziyoruz
+    db.run(`
+      INSERT OR REPLACE INTO branches (id, name, latitude, longitude, radius_meters)
+      VALUES (1, 'Merkez Ofis', 41.0082, 28.9784, 1000000)
+    `, (err) => {
+      if (err) console.error("Şube hatası:", err.message);
+    });
 
     db.run(`
-      INSERT INTO branches (id, name, latitude, longitude, radius_meters)
-      VALUES (1, 'Merkez Ofis', 41.0082, 28.9784, 500000)
-    `, function(err) {
-      if (!err) {
-        db.run(`
-          INSERT INTO users (id, full_name, email, role, device_uuid, branch_id)
-          VALUES (1, 'Ahmet Yılmaz', 'ahmet@sirket.com', 'EMPLOYEE', 'AQ3A.250226.002', 1)
-        `, function(err2) {
-          if (!err2) {
-            console.log("✅ Veritabanı otomatik olarak Ahmet Yılmaz ve cihaz kimliği ile dolduruldu!");
-          }
-        });
-      }
+      INSERT OR REPLACE INTO users (id, full_name, email, role, device_uuid, branch_id)
+      VALUES (1, 'Ahmet Yılmaz', 'ahmet@sirket.com', 'EMPLOYEE', 'AQ3A.250226.002', 1)
+    `, (err) => {
+      if (err) console.error("Kullanıcı hatası:", err.message);
+      else console.log("✅ Veritabanı 1000 km test yarıçapı ile başarıyla güncellendi!");
     });
   });
 }
@@ -61,10 +56,10 @@ function autoSeedDatabase() {
 // ROTALAR
 // -------------------------------------------------------------
 
-// Manuel seed endpoint'i (ihtiyaç halinde)
+// Manuel seed endpoint'i
 app.get('/api/seed', (req, res) => {
   autoSeedDatabase();
-  res.json({ message: "Test verileri başarıyla yüklendi!", device_uuid: 'AQ3A.250226.002' });
+  res.json({ message: "Test verileri 1000 km yarıçap ile güncellendi!", device_uuid: 'AQ3A.250226.002' });
 });
 
 // Tüm Şubeleri Listele
@@ -205,6 +200,5 @@ app.get('/api/attendance/logs', (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`PDKS Sunucusu http://localhost:${PORT} adresinde aktif!`);
-  // Sunucu ayağa kalkar kalkmaz veritabanını doldur
   autoSeedDatabase();
 });
