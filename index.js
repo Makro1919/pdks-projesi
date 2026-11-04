@@ -29,7 +29,6 @@ function getDistanceInMeters(lat1, lon1, lat2, lon2) {
   return R * c;
 }
 
-// Şube koordinatları ve 50 metre yarıçap varsayılan yapıldı
 function autoSeedDatabase() {
   db.serialize(() => {
     db.run(`
@@ -45,10 +44,9 @@ function autoSeedDatabase() {
 
 app.get('/api/seed', (req, res) => {
   autoSeedDatabase();
-  res.json({ message: "Şube koordinatları (38.387817, 27.122817) ve 50m yarıçap güncellendi!" });
+  res.json({ message: "Şube koordinatları ve 50m yarıçap sıfırlandı!" });
 });
 
-// Şube Bilgilerini Getir
 app.get('/api/branches', (req, res) => {
   db.get('SELECT * FROM branches WHERE id = 1', [], (err, row) => {
     if (err) return res.status(500).json({ error: err.message });
@@ -56,7 +54,6 @@ app.get('/api/branches', (req, res) => {
   });
 });
 
-// Şube Konumunu Web Paneli Üzerinden Güncelle
 app.post('/api/branches/update', (req, res) => {
   const { latitude, longitude, radius_meters } = req.body;
 
@@ -72,7 +69,7 @@ app.post('/api/branches/update', (req, res) => {
 
   db.run(query, [parseFloat(latitude), parseFloat(longitude), parseFloat(radius_meters || 50)], function(err) {
     if (err) return res.status(500).json({ success: false, message: "Şube güncellenemedi." });
-    res.json({ success: true, message: "Şube konumu ve yarıçapı başarıyla güncellendi!" });
+    res.json({ success: true, message: "Şube konumu başarıyla güncellendi!" });
   });
 });
 
@@ -201,6 +198,7 @@ app.post('/api/attendance/scan', (req, res) => {
   });
 });
 
+// OTURUM (SESSION) VE MOLA HESAPLAMALI GELİŞMİŞ RAPOR
 app.get('/api/reports', (req, res) => {
   const { start_date, end_date, user_id } = req.query;
 
@@ -242,74 +240,123 @@ app.get('/api/reports', (req, res) => {
     db.all(query, params, (err, rows) => {
       if (err) return res.status(500).json({ error: err.message });
 
-      const dailyMap = {};
+      // Gün ve Kullanıcı bazında gruplama
+      const dailyGroups = {};
 
       rows.forEach(log => {
         const dateStr = log.timestamp.split(' ')[0];
         const key = `${log.user_id}_${dateStr}`;
 
-        if (!dailyMap[key]) {
-          dailyMap[key] = {
+        if (!dailyGroups[key]) {
+          dailyGroups[key] = {
             date: dateStr,
             user_id: log.user_id,
             full_name: log.full_name,
-            check_in: null,
-            check_out: null,
-            in_lat: null,
-            in_lng: null,
-            out_lat: null,
-            out_lng: null
+            logs: []
           };
         }
-
-        if (log.type === 'CHECK_IN' && !dailyMap[key].check_in) {
-          dailyMap[key].check_in = log.timestamp;
-          dailyMap[key].in_lat = log.latitude;
-          dailyMap[key].in_lng = log.longitude;
-        } else if (log.type === 'CHECK_OUT') {
-          dailyMap[key].check_out = log.timestamp;
-          dailyMap[key].out_lat = log.latitude;
-          dailyMap[key].out_lng = log.longitude;
-        }
+        dailyGroups[key].logs.push(log);
       });
 
-      const reportData = Object.values(dailyMap).map(item => {
-        let workedMinutes = 0;
-        let lateMinutes = 0;
-        let earlyExitMinutes = 0;
+      const reportData = Object.values(dailyGroups).map(group => {
+        const logs = group.logs;
+        const sessions = [];
+        let currentCheckIn = null;
+        let totalWorkedMinutes = 0;
+        let totalBreakMinutes = 0;
 
-        if (item.check_in) {
-          const inTime = new Date(item.check_in.replace(' ', 'T'));
-          const shiftStart = new Date(inTime);
-          shiftStart.setHours(9, 0, 0, 0);
+        // Çiftleştirme (Pairing): GİRİŞ -> ÇIKIŞ oturumları oluşturma
+        logs.forEach(log => {
+          if (log.type === 'CHECK_IN') {
+            if (!currentCheckIn) {
+              currentCheckIn = log;
+            }
+          } else if (log.type === 'CHECK_OUT') {
+            if (currentCheckIn) {
+              const inTime = new Date(currentCheckIn.timestamp.replace(' ', 'T'));
+              const outTime = new Date(log.timestamp.replace(' ', 'T'));
+              const worked = Math.max(0, Math.floor((outTime - inTime) / 60000));
+              totalWorkedMinutes += worked;
 
-          if (inTime > shiftStart) {
-            const diff = Math.floor((inTime - shiftStart) / 60000);
-            if (diff > 15) lateMinutes = diff;
+              sessions.push({
+                check_in: currentCheckIn.timestamp,
+                check_out: log.timestamp,
+                in_lat: currentCheckIn.latitude,
+                in_lng: currentCheckIn.longitude,
+                out_lat: log.latitude,
+                out_lng: log.longitude,
+                worked_minutes: worked
+              });
+
+              currentCheckIn = null;
+            }
+          }
+        });
+
+        // Açık kalmış (halen çıkış yapılmamış) oturum
+        if (currentCheckIn) {
+          sessions.push({
+            check_in: currentCheckIn.timestamp,
+            check_out: null,
+            in_lat: currentCheckIn.latitude,
+            in_lng: currentCheckIn.longitude,
+            out_lat: null,
+            out_lng: null,
+            worked_minutes: 0
+          });
+        }
+
+        // Mola Süresi Hesabı (Oturumlar arası geçen süreler)
+        for (let i = 0; i < sessions.length - 1; i++) {
+          if (sessions[i].check_out && sessions[i + 1].check_in) {
+            const prevOut = new Date(sessions[i].check_out.replace(' ', 'T'));
+            const nextIn = new Date(sessions[i + 1].check_in.replace(' ', 'T'));
+            const breakMins = Math.max(0, Math.floor((nextIn - prevOut) / 60000));
+            totalBreakMinutes += breakMins;
           }
         }
 
-        if (item.check_out) {
-          const outTime = new Date(item.check_out.replace(' ', 'T'));
+        // İlk Giriş ve Son Çıkış
+        const firstCheckIn = logs.find(l => l.type === 'CHECK_IN');
+        const lastCheckOut = logs.slice().reverse().find(l => l.type === 'CHECK_OUT');
+
+        let lateMinutes = 0;
+        let earlyExitMinutes = 0;
+
+        if (firstCheckIn) {
+          const inTime = new Date(firstCheckIn.timestamp.replace(' ', 'T'));
+          const shiftStart = new Date(inTime);
+          shiftStart.setHours(9, 0, 0, 0); // 09:00 Mesai Başlangıcı
+
+          if (inTime > shiftStart) {
+            const diff = Math.floor((inTime - shiftStart) / 60000);
+            if (diff > 15) lateMinutes = diff; // 15 dk tolerans
+          }
+        }
+
+        if (lastCheckOut) {
+          const outTime = new Date(lastCheckOut.timestamp.replace(' ', 'T'));
           const shiftEnd = new Date(outTime);
-          shiftEnd.setHours(18, 0, 0, 0);
+          shiftEnd.setHours(18, 0, 0, 0); // 18:00 Mesai Bitimi
 
           if (outTime < shiftEnd) {
             earlyExitMinutes = Math.floor((shiftEnd - outTime) / 60000);
           }
         }
 
-        if (item.check_in && item.check_out) {
-          const inTime = new Date(item.check_in.replace(' ', 'T'));
-          const outTime = new Date(item.check_out.replace(' ', 'T'));
-          workedMinutes = Math.max(0, Math.floor((outTime - inTime) / 60000));
-        }
-
         return {
-          ...item,
-          worked_minutes: workedMinutes,
+          date: group.date,
+          user_id: group.user_id,
+          full_name: group.full_name,
+          first_check_in: firstCheckIn ? firstCheckIn.timestamp : null,
+          last_check_out: lastCheckOut ? lastCheckOut.timestamp : null,
+          total_worked_minutes: totalWorkedMinutes,
+          total_break_minutes: totalBreakMinutes,
           late_minutes: lateMinutes,
-          early_exit_minutes: earlyExitMinutes
+          early_exit_minutes: earlyExitMinutes,
+          sessions_count: sessions.length,
+          sessions: sessions,
+          movements: logs
         };
       });
 

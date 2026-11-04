@@ -33,14 +33,14 @@
         .filter-group input, .filter-group select { padding: 8px 12px; border: 1px solid #ccc; border-radius: 6px; font-size: 14px; }
         
         table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-        th, td { padding: 10px; text-align: left; border-bottom: 1px solid #ddd; font-size: 14px; }
+        th, td { padding: 10px; text-align: left; border-bottom: 1px solid #ddd; font-size: 13px; }
         th { background-color: #f8f9fa; color: #2c3e50; }
         
         .btn { padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: bold; text-decoration: none; display: inline-flex; align-items: center; gap: 4px; }
         .btn-primary { background: #3498db; color: white; }
         .btn-success { background: #27ae60; color: white; }
         .btn-danger { background: #e74c3c; color: white; padding: 5px 10px; font-size: 12px; }
-        .btn-map { background: #e67e22; color: white; padding: 5px 10px; font-size: 12px; border-radius: 4px; }
+        .btn-map { background: #e67e22; color: white; padding: 4px 8px; font-size: 11px; border-radius: 4px; }
         .btn-map:hover { background: #d35400; }
 
         .badge { padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: bold; }
@@ -49,39 +49,31 @@
         .badge-danger { background: #f8d7da; color: #721c24; }
         .badge-info { background: #d1ecf1; color: #0c5460; }
 
-        /* TAM EKRAN MODAL STİLLERİ */
+        /* MODAL STİLLERİ */
+        .modal-overlay {
+            position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+            background: rgba(0,0,0,0.6); z-index: 999; display: flex; justify-content: center; align-items: center;
+        }
+        .modal-content {
+            background: white; padding: 25px; border-radius: 12px; width: 90%; max-width: 650px;
+            max-height: 85vh; overflow-y: auto; box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+        }
+        .modal-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #eee; padding-bottom: 10px; margin-bottom: 15px; }
+        .modal-close { background: none; border: none; font-size: 20px; font-weight: bold; cursor: pointer; color: #888; }
+        .modal-close:hover { color: #000; }
+
         .fullscreen-modal {
-            position: fixed;
-            top: 0; left: 0; width: 100vw; height: 100vh;
-            background-color: #0f172a;
-            z-index: 9999;
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            align-items: center;
-            color: white;
+            position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+            background-color: #0f172a; z-index: 9999; display: flex; flex-direction: column;
+            justify-content: center; align-items: center; color: white;
         }
         .fullscreen-modal img {
-            width: 360px;
-            height: 360px;
-            background: white;
-            padding: 15px;
-            border-radius: 16px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.6);
-            margin: 20px 0;
+            width: 360px; height: 360px; background: white; padding: 15px; border-radius: 16px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.6); margin: 20px 0;
         }
         .close-fs-btn {
-            position: absolute;
-            top: 25px;
-            right: 25px;
-            background: #e74c3c;
-            color: white;
-            border: none;
-            padding: 12px 24px;
-            font-size: 16px;
-            font-weight: bold;
-            border-radius: 8px;
-            cursor: pointer;
+            position: absolute; top: 25px; right: 25px; background: #e74c3c; color: white;
+            border: none; padding: 12px 24px; font-size: 16px; font-weight: bold; border-radius: 8px; cursor: pointer;
         }
         .close-fs-btn:hover { background: #c0392b; }
     </style>
@@ -154,7 +146,7 @@
                 <div class="kpi-value" id="kpi-inside-count">0 Kişi</div>
             </div>
             <div class="kpi-card">
-                <div class="kpi-title">Toplam Kayıtlı Gün</div>
+                <div class="kpi-title">Toplam Çalışılan Gün</div>
                 <div class="kpi-value" id="kpi-total-days">0</div>
             </div>
             <div class="kpi-card danger">
@@ -170,7 +162,7 @@
         <!-- Gelişmiş Raporlama Tablosu -->
         <div class="card">
             <div class="card-header">
-                <h2>📊 Gelişmiş Vardiya & Devam Raporu</h2>
+                <h2>📊 Günlük Vardiya & Mola Raporu</h2>
                 <button class="btn btn-success" onclick="exportReportToCSV()">📥 Raporu İndir (.CSV)</button>
             </div>
 
@@ -199,11 +191,11 @@
                     <tr>
                         <th>Tarih</th>
                         <th>Personel</th>
-                        <th>Giriş Saati</th>
-                        <th>Çıkış Saati</th>
-                        <th>Süre</th>
+                        <th>İlk Giriş / Son Çıkış</th>
+                        <th>Net Çalışma</th>
+                        <th>Toplam Mola</th>
                         <th>Durum</th>
-                        <th>Harita (Google Maps)</th>
+                        <th>Detay</th>
                     </tr>
                 </thead>
                 <tbody id="report-list-body">
@@ -213,7 +205,7 @@
         </div>
     </div>
 
-    <!-- TAM EKRAN KAPINIZ İÇİN KİOSK QR PENCERESİ -->
+    <!-- TAM EKRAN KİOSK QR PENCERESİ -->
     <div id="qr-fullscreen-modal" class="fullscreen-modal" style="display: none;">
         <button class="close-fs-btn" onclick="closeFullscreenQR()">✖ Çıkış (Esc)</button>
         <h2 style="font-size: 28px; color: #38bdf8;">📌 PDKS KAPI GİRİŞ & ÇIKIŞ QR KODU</h2>
@@ -225,6 +217,19 @@
                 <input type="checkbox" id="auto-refresh-check-fs" checked onchange="toggleAutoRefresh(this.checked)"> Otomatik Yenile (10 sn)
             </label>
             <button class="btn btn-primary" style="font-size: 15px; padding: 8px 16px;" onclick="loadQrCode()">🔄 Şimdi Yenile</button>
+        </div>
+    </div>
+
+    <!-- DETAY HAREKET PENCERESİ (MODAL) -->
+    <div id="detail-modal" class="modal-overlay" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="modal-title">Günlük Giriş/Çıkış Detayları</h3>
+                <button class="modal-close" onclick="closeDetailModal()">✖</button>
+            </div>
+            <div id="modal-body">
+                Yükleniyor...
+            </div>
         </div>
     </div>
 
@@ -273,7 +278,10 @@
         }
 
         document.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape') closeFullscreenQR();
+            if (e.key === 'Escape') {
+                closeFullscreenQR();
+                closeDetailModal();
+            }
         });
 
         async function loadBranch() {
@@ -305,11 +313,8 @@
                     body: JSON.stringify({ latitude: lat, longitude: lng, radius_meters: radius })
                 });
                 const data = await res.json();
-                if (data.success) {
-                    alert(data.message);
-                } else {
-                    alert("Hata: " + data.message);
-                }
+                if (data.success) alert(data.message);
+                else alert("Hata: " + data.message);
             } catch (e) { alert("Sunucuya erişilemedi."); }
         }
 
@@ -383,13 +388,17 @@
                     return;
                 }
 
-                currentReportData.forEach(r => {
-                    const inTimeStr = r.check_in ? r.check_in.split(' ')[1] : '--:--';
-                    const outTimeStr = r.check_out ? r.check_out.split(' ')[1] : '--:--';
+                currentReportData.forEach((r, idx) => {
+                    const firstIn = r.first_check_in ? r.first_check_in.split(' ')[1] : '--:--';
+                    const lastOut = r.last_check_out ? r.last_check_out.split(' ')[1] : '--:--';
 
-                    let hours = Math.floor(r.worked_minutes / 60);
-                    let mins = r.worked_minutes % 60;
-                    let workedText = r.check_out ? `${hours}s ${mins}dk` : 'Devam Ediyor';
+                    let wHours = Math.floor(r.total_worked_minutes / 60);
+                    let wMins = r.total_worked_minutes % 60;
+                    let workedText = `${wHours}s ${wMins}dk`;
+
+                    let bHours = Math.floor(r.total_break_minutes / 60);
+                    let bMins = r.total_break_minutes % 60;
+                    let breakText = `${bHours > 0 ? bHours + 's ' : ''}${bMins}dk`;
 
                     let statusBadges = '';
 
@@ -401,30 +410,24 @@
                         totalEarly++;
                         statusBadges += `<span class="badge badge-warning">Erken (${r.early_exit_minutes}m)</span> `;
                     }
-                    if (r.late_minutes === 0 && r.early_exit_minutes === 0 && r.check_out) {
+                    if (r.late_minutes === 0 && r.early_exit_minutes === 0 && r.last_check_out) {
                         statusBadges += `<span class="badge badge-success">Zamanında</span>`;
                     }
-                    if (!r.check_out) {
+                    if (!r.last_check_out) {
                         statusBadges += `<span class="badge badge-info">İçeride</span>`;
-                    }
-
-                    let mapBtns = '';
-                    if (r.in_lat && r.in_lng) {
-                        mapBtns += `<a href="https://www.google.com/maps?q=${r.in_lat},${r.in_lng}" target="_blank" class="btn btn-map">📍 Giriş Konumu</a> `;
-                    }
-                    if (r.out_lat && r.out_lng) {
-                        mapBtns += `<a href="https://www.google.com/maps?q=${r.out_lat},${r.out_lng}" target="_blank" class="btn btn-map">📍 Çıkış Konumu</a>`;
                     }
 
                     const tr = document.createElement('tr');
                     tr.innerHTML = `
                         <td><strong>${r.date}</strong></td>
                         <td>${r.full_name}</td>
-                        <td>🟢 ${inTimeStr}</td>
-                        <td>🟠 ${outTimeStr}</td>
-                        <td>${workedText}</td>
+                        <td>🟢 ${firstIn} / 🟠 ${lastOut}</td>
+                        <td><strong>${workedText}</strong></td>
+                        <td><small style="color: #666;">${breakText}</small></td>
                         <td>${statusBadges}</td>
-                        <td>${mapBtns || '--'}</td>
+                        <td>
+                            <button class="btn btn-primary" style="padding: 4px 8px; font-size: 11px;" onclick="showMovementDetails(${idx})">🔍 Hareketler (${r.sessions_count})</button>
+                        </td>
                     `;
                     tbody.appendChild(tr);
                 });
@@ -435,17 +438,77 @@
             } catch (e) { console.error("Report Hata", e); }
         }
 
+        function showMovementDetails(index) {
+            const item = currentReportData[index];
+            if (!item) return;
+
+            document.getElementById('modal-title').innerText = `${item.full_name} - ${item.date} Hareket Detayları`;
+            
+            let html = `
+                <div style="margin-bottom: 15px; background: #f8f9fa; padding: 12px; border-radius: 8px;">
+                    <div><strong>Net Çalışma Süresi:</strong> ${Math.floor(item.total_worked_minutes/60)} saat ${item.total_worked_minutes%60} dk</div>
+                    <div><strong>Toplam Mola Süresi:</strong> ${Math.floor(item.total_break_minutes/60)} saat ${item.total_break_minutes%60} dk</div>
+                    <div><strong>Toplam Oturum Sayısı:</strong> ${item.sessions_count} Oturum</div>
+                </div>
+                <table style="width:100%;">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Giriş Saati</th>
+                            <th>Çıkış Saati</th>
+                            <th>Süre</th>
+                            <th>Konumlar</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+            `;
+
+            item.sessions.forEach((s, idx) => {
+                const inTime = s.check_in ? s.check_in.split(' ')[1] : '--:--';
+                const outTime = s.check_out ? s.check_out.split(' ')[1] : 'Devam Ediyor';
+                const durHours = Math.floor(s.worked_minutes / 60);
+                const durMins = s.worked_minutes % 60;
+                const durText = s.check_out ? `${durHours > 0 ? durHours + 's ' : ''}${durMins}dk` : '--';
+
+                let maps = '';
+                if (s.in_lat && s.in_lng) {
+                    maps += `<a href="https://www.google.com/maps?q=${s.in_lat},${s.in_lng}" target="_blank" class="btn btn-map">📍 Giriş</a> `;
+                }
+                if (s.out_lat && s.out_lng) {
+                    maps += `<a href="https://www.google.com/maps?q=${s.out_lat},${s.out_lng}" target="_blank" class="btn btn-map">📍 Çıkış</a>`;
+                }
+
+                html += `
+                    <tr>
+                        <td><strong>${idx + 1}</strong></td>
+                        <td>🟢 ${inTime}</td>
+                        <td>🟠 ${outTime}</td>
+                        <td>${durText}</td>
+                        <td>${maps || '--'}</td>
+                    </tr>
+                `;
+            });
+
+            html += `</tbody></table>`;
+            document.getElementById('modal-body').innerHTML = html;
+            document.getElementById('detail-modal').style.display = 'flex';
+        }
+
+        function closeDetailModal() {
+            document.getElementById('detail-modal').style.display = 'none';
+        }
+
         function exportReportToCSV() {
             if (currentReportData.length === 0) {
                 alert("İndirilecek veri bulunamadı.");
                 return;
             }
 
-            let csvContent = "\uFEFFTarih,Personel,Giris Saati,Cikis Saati,Calisma Suresi (Dk),Gec Kalma (Dk),Erken Cikis (Dk),Giris Lat,Giris Lng,Cikis Lat,Cikis Lng\n";
+            let csvContent = "\uFEFFTarih,Personel,Ilk Giris,Son Cikis,Net Calisma (Dk),Toplam Mola (Dk),Geckalme (Dk),ErkenCikis (Dk)\n";
             currentReportData.forEach(r => {
-                const inStr = r.check_in ? r.check_in.split(' ')[1] : '';
-                const outStr = r.check_out ? r.check_out.split(' ')[1] : '';
-                csvContent += `"${r.date}","${r.full_name}","${inStr}","${outStr}","${r.worked_minutes}","${r.late_minutes}","${r.early_exit_minutes}","${r.in_lat || ''}","${r.in_lng || ''}","${r.out_lat || ''}","${r.out_lng || ''}"\n`;
+                const firstIn = r.first_check_in ? r.first_check_in.split(' ')[1] : '';
+                const lastOut = r.last_check_out ? r.last_check_out.split(' ')[1] : '';
+                csvContent += `"${r.date}","${r.full_name}","${firstIn}","${lastOut}","${r.total_worked_minutes}","${r.total_break_minutes}","${r.late_minutes}","${r.early_exit_minutes}"\n`;
             });
 
             const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -462,7 +525,6 @@
         loadUsers();
         loadReport();
 
-        // 1 saniyelik sayaç kontrolü
         setInterval(() => {
             if (isAutoRefreshEnabled) {
                 countdownVal--;
