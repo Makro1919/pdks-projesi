@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>PDKS Yönetim & Analiz Paneli</title>
+    <!-- Chart.js Kütüphanesi -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
         body { background-color: #f4f6f9; color: #333; padding: 20px; }
@@ -36,7 +38,7 @@
         th, td { padding: 10px; text-align: left; border-bottom: 1px solid #ddd; font-size: 13px; }
         th { background-color: #f8f9fa; color: #2c3e50; }
         
-        .btn { padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: bold; text-decoration: none; display: inline-flex; align-items: center; gap: 4px; }
+        .btn { padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: bold; text-decoration: none; display: inline-flex; align-items: center; gap: 6px; }
         .btn-primary { background: #3498db; color: white; }
         .btn-success { background: #27ae60; color: white; }
         .btn-danger { background: #e74c3c; color: white; padding: 5px 10px; font-size: 12px; }
@@ -76,6 +78,8 @@
             border: none; padding: 12px 24px; font-size: 16px; font-weight: bold; border-radius: 8px; cursor: pointer;
         }
         .close-fs-btn:hover { background: #c0392b; }
+
+        .chart-container { position: relative; height: 260px; width: 100%; }
     </style>
 </head>
 <body>
@@ -187,11 +191,30 @@
             </div>
         </div>
 
-        <!-- Gelişmiş Raporlama Tablosu -->
+        <!-- GÖRSEL İSTATİSTİK GRAFİKLERİ -->
+        <div class="grid">
+            <div class="card">
+                <div class="card-header"><h2>📊 Personel Bazlı Toplam Çalışma Süresi (Saat)</h2></div>
+                <div class="chart-container">
+                    <canvas id="chart-work-hours"></canvas>
+                </div>
+            </div>
+            <div class="card">
+                <div class="card-header"><h2>🍩 Durum ve İhlal Dağılımı</h2></div>
+                <div class="chart-container">
+                    <canvas id="chart-status-pie"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Gelişmiş Raporlama Tablosu ve CSV Seçenekleri -->
         <div class="card">
             <div class="card-header">
                 <h2>📊 Günlük Vardiya & Mola Raporu</h2>
-                <button class="btn btn-success" onclick="exportReportToCSV()">📥 Raporu İndir (.CSV)</button>
+                <div style="display: flex; gap: 10px;">
+                    <button class="btn btn-success" onclick="exportReportToCSV('summary')">📊 Özet CSV İndir</button>
+                    <button class="btn btn-primary" onclick="exportReportToCSV('detail')">📋 Detaylı CSV İndir</button>
+                </div>
             </div>
 
             <div class="filter-box">
@@ -267,7 +290,10 @@
         let isAutoRefreshEnabled = true;
         let currentReportData = [];
 
-        // Datetime Input İçin Varsayılan Şu Anki Tarih Saat
+        // Chart.js Obje Referansları
+        let workChartInstance = null;
+        let statusChartInstance = null;
+
         function setDefaultDateTime() {
             const now = new Date();
             now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
@@ -455,6 +481,7 @@
                     tbody.innerHTML = '<tr><td colspan="7">Kayıt bulunamadı.</td></tr>';
                     document.getElementById('kpi-late-count').innerText = "0 İhlal";
                     document.getElementById('kpi-early-count').innerText = "0 İhlal";
+                    renderCharts([]);
                     return;
                 }
 
@@ -509,7 +536,87 @@
                 document.getElementById('kpi-late-count').innerText = `${totalLate} İhlal`;
                 document.getElementById('kpi-early-count').innerText = `${totalEarly} İhlal`;
 
+                // Görsel Grafikleri Çiz
+                renderCharts(currentReportData);
+
             } catch (e) { console.error("Report Hata", e); }
+        }
+
+        // CHART.JS GRAFİK ÇİZİM FONKSİYONU
+        function renderCharts(reportData) {
+            const userWorkedMap = {};
+            let countOnTime = 0;
+            let countLate = 0;
+            let countEarly = 0;
+            let countExcused = 0;
+            let countInside = 0;
+
+            reportData.forEach(r => {
+                // 1. Personel Bazlı Toplam Çalışma Hesabı (Saat Cinsinden)
+                if (!userWorkedMap[r.full_name]) {
+                    userWorkedMap[r.full_name] = 0;
+                }
+                userWorkedMap[r.full_name] += (r.total_worked_minutes / 60);
+
+                // 2. Durum ve İhlal Dağılımı Hesabı
+                if (r.is_excused) {
+                    countExcused++;
+                } else {
+                    if (r.late_minutes > 0) countLate++;
+                    if (r.early_exit_minutes > 0) countEarly++;
+                    if (r.late_minutes === 0 && r.early_exit_minutes === 0 && r.last_check_out) countOnTime++;
+                    if (!r.last_check_out) countInside++;
+                }
+            });
+
+            // Grafik 1: Personel Bazlı Toplam Çalışma Süresi (Bar Chart)
+            const userNames = Object.keys(userWorkedMap);
+            const workHours = Object.values(userWorkedMap).map(h => parseFloat(h.toFixed(1)));
+
+            const ctxBar = document.getElementById('chart-work-hours').getContext('2d');
+            if (workChartInstance) workChartInstance.destroy();
+
+            workChartInstance = new Chart(ctxBar, {
+                type: 'bar',
+                data: {
+                    labels: userNames,
+                    datasets: [{
+                        label: 'Toplam Net Çalışma (Saat)',
+                        data: workHours,
+                        backgroundColor: '#3498db',
+                        borderRadius: 6
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        y: { beginAtZero: true, title: { display: true, text: 'Saat' } }
+                    }
+                }
+            });
+
+            // Grafik 2: Durum ve İhlal Dağılımı (Doughnut Chart)
+            const ctxPie = document.getElementById('chart-status-pie').getContext('2d');
+            if (statusChartInstance) statusChartInstance.destroy();
+
+            statusChartInstance = new Chart(ctxPie, {
+                type: 'doughnut',
+                data: {
+                    labels: ['Zamanında', 'Geç Kalma', 'Erken Çıkış', 'Mazeretli', 'İçeride'],
+                    datasets: [{
+                        data: [countOnTime, countLate, countEarly, countExcused, countInside],
+                        backgroundColor: ['#2ecc71', '#e74c3c', '#e67e22', '#9b59b6', '#3498db']
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { position: 'right' }
+                    }
+                }
+            });
         }
 
         function showMovementDetails(index) {
@@ -575,23 +682,50 @@
             document.getElementById('detail-modal').style.display = 'none';
         }
 
-        function exportReportToCSV() {
+        // ÖZET VE DETAYLI CSV İNDİRME SEÇENEĞİ
+        function exportReportToCSV(type) {
             if (currentReportData.length === 0) {
                 alert("İndirilecek veri bulunamadı.");
                 return;
             }
 
-            let csvContent = "\uFEFFTarih,Personel,Ilk Giris,Son Cikis,Net Calisma (Dk),Toplam Mola (Dk),Geckalme (Dk),ErkenCikis (Dk),Mazeretli\n";
-            currentReportData.forEach(r => {
-                const firstIn = r.first_check_in ? r.first_check_in.split(' ')[1] : '';
-                const lastOut = r.last_check_out ? r.last_check_out.split(' ')[1] : '';
-                csvContent += `"${r.date}","${r.full_name}","${firstIn}","${lastOut}","${r.total_worked_minutes}","${r.total_break_minutes}","${r.late_minutes}","${r.early_exit_minutes}","${r.is_excused ? 'EVET' : 'HAYIR'}"\n`;
-            });
+            let csvContent = "";
+            let fileName = "";
+
+            if (type === 'summary') {
+                // 1. Özet CSV (Personel & Gün Bazında)
+                fileName = `PDKS_Ozet_Rapor_${new Date().toISOString().slice(0,10)}.csv`;
+                csvContent = "\uFEFFTarih,Personel,Ilk Giris,Son Cikis,Net Calisma (Dk),Toplam Mola (Dk),Geckalme (Dk),ErkenCikis (Dk),Mazeretli\n";
+                
+                currentReportData.forEach(r => {
+                    const firstIn = r.first_check_in ? r.first_check_in.split(' ')[1] : '';
+                    const lastOut = r.last_check_out ? r.last_check_out.split(' ')[1] : '';
+                    csvContent += `"${r.date}","${r.full_name}","${firstIn}","${lastOut}","${r.total_worked_minutes}","${r.total_break_minutes}","${r.late_minutes}","${r.early_exit_minutes}","${r.is_excused ? 'EVET' : 'HAYIR'}"\n`;
+                });
+
+            } else if (type === 'detail') {
+                // 2. Detaylı CSV (Tüm Oturumlar ve GPS Koordinatları)
+                fileName = `PDKS_Detayli_Hareket_Raporu_${new Date().toISOString().slice(0,10)}.csv`;
+                csvContent = "\uFEFFTarih,Personel,Oturum No,Giris Saati,Cikis Saati,Oturum Suresi (Dk),Giris Enlemi,Giris Boylami,Cikis Enlemi,Cikis Boylami,Islem Tipi\n";
+                
+                currentReportData.forEach(r => {
+                    if (r.sessions && r.sessions.length > 0) {
+                        r.sessions.forEach((s, idx) => {
+                            const inTime = s.check_in ? s.check_in.split(' ')[1] : '';
+                            const outTime = s.check_out ? s.check_out.split(' ')[1] : '';
+                            const isManualText = s.is_manual ? 'Manuel Kayit' : 'QR Scan';
+                            csvContent += `"${r.date}","${r.full_name}","${idx + 1}","${inTime}","${outTime}","${s.worked_minutes}","${s.in_lat || ''}","${s.in_lng || ''}","${s.out_lat || ''}","${s.out_lng || ''}","${isManualText}"\n`;
+                        });
+                    } else if (r.is_excused) {
+                        csvContent += `"${r.date}","${r.full_name}","1","--","--","0","","","","","Mazeretli / Izinli"\n`;
+                    }
+                });
+            }
 
             const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
             const link = document.createElement("a");
             link.href = URL.createObjectURL(blob);
-            link.download = `PDKS_Vardiya_Raporu_${new Date().toISOString().slice(0,10)}.csv`;
+            link.download = fileName;
             document.body.appendChild(link);
             link.click();
             document.body.removeChild(link);
