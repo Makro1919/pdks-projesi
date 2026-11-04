@@ -48,8 +48,8 @@
         .badge-warning { background: #fff3cd; color: #856404; }
         .badge-danger { background: #f8d7da; color: #721c24; }
         .badge-info { background: #d1ecf1; color: #0c5460; }
+        .badge-purple { background: #e9d5ff; color: #6b21a8; }
 
-        /* MODAL STİLLERİ */
         .modal-overlay {
             position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
             background: rgba(0,0,0,0.6); z-index: 999; display: flex; justify-content: center; align-items: center;
@@ -114,6 +114,34 @@
                         <tr><td colspan="3">Yükleniyor...</td></tr>
                     </tbody>
                 </table>
+            </div>
+        </div>
+
+        <!-- MANUEL KAYIT VE MAZERET EKLEME KARTI -->
+        <div class="card">
+            <div class="card-header"><h2>✏️ Yönetici Manuel Kayıt & Mazeret Girişi</h2></div>
+            <div class="filter-box">
+                <div class="filter-group">
+                    <label>Personel Seçin:</label>
+                    <select id="manual-user-select">
+                        <option value="">Yükleniyor...</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label>İşlem Türü:</label>
+                    <select id="manual-type-select">
+                        <option value="CHECK_IN">🟢 GİRİŞ (Check-In)</option>
+                        <option value="CHECK_OUT">🟠 ÇIKIŞ (Check-Out)</option>
+                        <option value="EXCUSED">🟣 MAZERET / İZİNLİ (Tam Gün)</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label>Tarih ve Saat:</label>
+                    <input type="datetime-local" id="manual-timestamp">
+                </div>
+                <div class="filter-group" style="align-self: flex-end;">
+                    <button class="btn btn-primary" onclick="addManualAttendance()">➕ Kaydı Ekle</button>
+                </div>
             </div>
         </div>
 
@@ -239,6 +267,13 @@
         let isAutoRefreshEnabled = true;
         let currentReportData = [];
 
+        // Datetime Input İçin Varsayılan Şu Anki Tarih Saat
+        function setDefaultDateTime() {
+            const now = new Date();
+            now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+            document.getElementById('manual-timestamp').value = now.toISOString().slice(0, 16);
+        }
+
         async function loadQrCode() {
             try {
                 const res = await fetch(`${API_BASE}/api/qr/generate`);
@@ -324,9 +359,11 @@
                 const data = await res.json();
                 const tbody = document.getElementById('user-list-body');
                 const userSelect = document.getElementById('filter-user-select');
+                const manualUserSelect = document.getElementById('manual-user-select');
 
                 tbody.innerHTML = '';
                 userSelect.innerHTML = '<option value="ALL">Tüm Personeller</option>';
+                manualUserSelect.innerHTML = '<option value="">Personel Seçin...</option>';
 
                 if (!data.users || data.users.length === 0) {
                     tbody.innerHTML = '<tr><td colspan="3">Kayıtlı personel yok.</td></tr>';
@@ -346,8 +383,41 @@
                     opt.value = u.id;
                     opt.textContent = u.full_name;
                     userSelect.appendChild(opt);
+
+                    const opt2 = document.createElement('option');
+                    opt2.value = u.id;
+                    opt2.textContent = u.full_name;
+                    manualUserSelect.appendChild(opt2);
                 });
             } catch (e) { console.error("User Hata", e); }
+        }
+
+        async function addManualAttendance() {
+            const userId = document.getElementById('manual-user-select').value;
+            const type = document.getElementById('manual-type-select').value;
+            const timestamp = document.getElementById('manual-timestamp').value;
+
+            if (!userId || !type || !timestamp) {
+                alert("Lütfen tüm alanları doldurun.");
+                return;
+            }
+
+            try {
+                const res = await fetch(`${API_BASE}/api/attendance/manual`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ user_id: userId, type: type, timestamp: timestamp })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    alert(data.message);
+                    loadReport();
+                } else {
+                    alert("Hata: " + data.message);
+                }
+            } catch (e) {
+                alert("Sunucu hatası.");
+            }
         }
 
         async function deleteUser(id, name) {
@@ -402,19 +472,23 @@
 
                     let statusBadges = '';
 
-                    if (r.late_minutes > 0) {
-                        totalLate++;
-                        statusBadges += `<span class="badge badge-danger">Geç (${r.late_minutes}m)</span> `;
-                    }
-                    if (r.early_exit_minutes > 0) {
-                        totalEarly++;
-                        statusBadges += `<span class="badge badge-warning">Erken (${r.early_exit_minutes}m)</span> `;
-                    }
-                    if (r.late_minutes === 0 && r.early_exit_minutes === 0 && r.last_check_out) {
-                        statusBadges += `<span class="badge badge-success">Zamanında</span>`;
-                    }
-                    if (!r.last_check_out) {
-                        statusBadges += `<span class="badge badge-info">İçeride</span>`;
+                    if (r.is_excused) {
+                        statusBadges += `<span class="badge badge-purple">İzinli / Mazeretli</span> `;
+                    } else {
+                        if (r.late_minutes > 0) {
+                            totalLate++;
+                            statusBadges += `<span class="badge badge-danger">Geç (${r.late_minutes}m)</span> `;
+                        }
+                        if (r.early_exit_minutes > 0) {
+                            totalEarly++;
+                            statusBadges += `<span class="badge badge-warning">Erken (${r.early_exit_minutes}m)</span> `;
+                        }
+                        if (r.late_minutes === 0 && r.early_exit_minutes === 0 && r.last_check_out) {
+                            statusBadges += `<span class="badge badge-success">Zamanında</span>`;
+                        }
+                        if (!r.last_check_out) {
+                            statusBadges += `<span class="badge badge-info">İçeride</span>`;
+                        }
                     }
 
                     const tr = document.createElement('tr');
@@ -422,8 +496,8 @@
                         <td><strong>${r.date}</strong></td>
                         <td>${r.full_name}</td>
                         <td>🟢 ${firstIn} / 🟠 ${lastOut}</td>
-                        <td><strong>${workedText}</strong></td>
-                        <td><small style="color: #666;">${breakText}</small></td>
+                        <td><strong>${r.is_excused ? '--' : workedText}</strong></td>
+                        <td><small style="color: #666;">${r.is_excused ? '--' : breakText}</small></td>
                         <td>${statusBadges}</td>
                         <td>
                             <button class="btn btn-primary" style="padding: 4px 8px; font-size: 11px;" onclick="showMovementDetails(${idx})">🔍 Hareketler (${r.sessions_count})</button>
@@ -471,10 +545,13 @@
                 const durText = s.check_out ? `${durHours > 0 ? durHours + 's ' : ''}${durMins}dk` : '--';
 
                 let maps = '';
-                if (s.in_lat && s.in_lng) {
+                if (s.in_lat && s.in_lng && s.in_lat !== 0) {
                     maps += `<a href="https://www.google.com/maps?q=${s.in_lat},${s.in_lng}" target="_blank" class="btn btn-map">📍 Giriş</a> `;
+                } else if (s.is_manual) {
+                    maps += `<span class="badge badge-info">Manuel Giriş</span> `;
                 }
-                if (s.out_lat && s.out_lng) {
+
+                if (s.out_lat && s.out_lng && s.out_lat !== 0) {
                     maps += `<a href="https://www.google.com/maps?q=${s.out_lat},${s.out_lng}" target="_blank" class="btn btn-map">📍 Çıkış</a>`;
                 }
 
@@ -504,11 +581,11 @@
                 return;
             }
 
-            let csvContent = "\uFEFFTarih,Personel,Ilk Giris,Son Cikis,Net Calisma (Dk),Toplam Mola (Dk),Geckalme (Dk),ErkenCikis (Dk)\n";
+            let csvContent = "\uFEFFTarih,Personel,Ilk Giris,Son Cikis,Net Calisma (Dk),Toplam Mola (Dk),Geckalme (Dk),ErkenCikis (Dk),Mazeretli\n";
             currentReportData.forEach(r => {
                 const firstIn = r.first_check_in ? r.first_check_in.split(' ')[1] : '';
                 const lastOut = r.last_check_out ? r.last_check_out.split(' ')[1] : '';
-                csvContent += `"${r.date}","${r.full_name}","${firstIn}","${lastOut}","${r.total_worked_minutes}","${r.total_break_minutes}","${r.late_minutes}","${r.early_exit_minutes}"\n`;
+                csvContent += `"${r.date}","${r.full_name}","${firstIn}","${lastOut}","${r.total_worked_minutes}","${r.total_break_minutes}","${r.late_minutes}","${r.early_exit_minutes}","${r.is_excused ? 'EVET' : 'HAYIR'}"\n`;
             });
 
             const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -524,6 +601,7 @@
         loadBranch();
         loadUsers();
         loadReport();
+        setDefaultDateTime();
 
         setInterval(() => {
             if (isAutoRefreshEnabled) {

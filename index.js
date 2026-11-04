@@ -76,7 +76,7 @@ app.post('/api/branches/update', (req, res) => {
 app.get('/api/users/by-device/:uuid', (req, res) => {
   const query = `
     SELECT users.*, branches.name as branch_name,
-      (SELECT type FROM attendance_logs WHERE user_id = users.id AND status = 'APPROVED' ORDER BY id DESC LIMIT 1) as last_type
+      (SELECT type FROM attendance_logs WHERE user_id = users.id AND status IN ('APPROVED', 'APPROVED_MANUAL') ORDER BY id DESC LIMIT 1) as last_type
     FROM users 
     LEFT JOIN branches ON users.branch_id = branches.id
     WHERE users.device_uuid = ?
@@ -136,6 +136,27 @@ app.get('/api/qr/generate', (req, res) => {
   res.json({ qr_token: token, timestamp: timestamp, expires_in_seconds: 10 });
 });
 
+// YÖNETİCİ MANUEL KAYIT VE MAZERET EKLEME ENDPOINT'İ
+app.post('/api/attendance/manual', (req, res) => {
+  const { user_id, type, timestamp } = req.body;
+
+  if (!user_id || !type || !timestamp) {
+    return res.status(400).json({ success: false, message: "Lütfen personel, işlem türü ve tarih/saat seçin." });
+  }
+
+  const formattedTimestamp = timestamp.replace('T', ' ') + (timestamp.length === 16 ? ':00' : '');
+  const status = (type === 'EXCUSED') ? 'EXCUSED' : 'APPROVED_MANUAL';
+
+  db.run(
+    `INSERT INTO attendance_logs (user_id, type, latitude, longitude, status, timestamp) VALUES (?, ?, 0, 0, ?, ?)`,
+    [user_id, type, status, formattedTimestamp],
+    function(err) {
+      if (err) return res.status(500).json({ success: false, message: "Manuel kayıt hatası: " + err.message });
+      res.json({ success: true, message: "Manuel kayıt / mazeret başarıyla eklendi!" });
+    }
+  );
+});
+
 app.post('/api/attendance/scan', (req, res) => {
   const { type, latitude, longitude, device_uuid } = req.body;
 
@@ -155,7 +176,7 @@ app.post('/api/attendance/scan', (req, res) => {
 
     const lastLogQuery = `
       SELECT type FROM attendance_logs 
-      WHERE user_id = ? AND status = 'APPROVED' 
+      WHERE user_id = ? AND status IN ('APPROVED', 'APPROVED_MANUAL') 
       ORDER BY id DESC LIMIT 1
     `;
 
@@ -198,7 +219,6 @@ app.post('/api/attendance/scan', (req, res) => {
   });
 });
 
-// OTURUM (SESSION) VE MOLA HESAPLAMALI GELİŞMİŞ RAPOR
 app.get('/api/reports', (req, res) => {
   const { start_date, end_date, user_id } = req.query;
 
@@ -206,7 +226,7 @@ app.get('/api/reports', (req, res) => {
     SELECT COUNT(*) as inside_count FROM (
       SELECT user_id, type 
       FROM attendance_logs 
-      WHERE status = 'APPROVED' 
+      WHERE status IN ('APPROVED', 'APPROVED_MANUAL') 
       ORDER BY id DESC
     ) GROUP BY user_id HAVING type = 'CHECK_IN'
   `;
@@ -218,7 +238,7 @@ app.get('/api/reports', (req, res) => {
       SELECT attendance_logs.*, users.full_name, users.email
       FROM attendance_logs
       JOIN users ON attendance_logs.user_id = users.id
-      WHERE attendance_logs.status = 'APPROVED'
+      WHERE attendance_logs.status IN ('APPROVED', 'APPROVED_MANUAL', 'EXCUSED')
     `;
     const params = [];
 
@@ -240,7 +260,6 @@ app.get('/api/reports', (req, res) => {
     db.all(query, params, (err, rows) => {
       if (err) return res.status(500).json({ error: err.message });
 
-      // Gün ve Kullanıcı bazında gruplama
       const dailyGroups = {};
 
       rows.forEach(log => {
@@ -264,10 +283,12 @@ app.get('/api/reports', (req, res) => {
         let currentCheckIn = null;
         let totalWorkedMinutes = 0;
         let totalBreakMinutes = 0;
+        let isExcused = false;
 
-        // Çiftleştirme (Pairing): GİRİŞ -> ÇIKIŞ oturumları oluşturma
         logs.forEach(log => {
-          if (log.type === 'CHECK_IN') {
+          if (log.status === 'EXCUSED') {
+            isExcused = true;
+          } else if (log.type === 'CHECK_IN') {
             if (!currentCheckIn) {
               currentCheckIn = log;
             }
@@ -285,7 +306,8 @@ app.get('/api/reports', (req, res) => {
                 in_lng: currentCheckIn.longitude,
                 out_lat: log.latitude,
                 out_lng: log.longitude,
-                worked_minutes: worked
+                worked_minutes: worked,
+                is_manual: currentCheckIn.status === 'APPROVED_MANUAL' || log.status === 'APPROVED_MANUAL'
               });
 
               currentCheckIn = null;
@@ -293,7 +315,6 @@ app.get('/api/reports', (req, res) => {
           }
         });
 
-        // Açık kalmış (halen çıkış yapılmamış) oturum
         if (currentCheckIn) {
           sessions.push({
             check_in: currentCheckIn.timestamp,
@@ -302,11 +323,11 @@ app.get('/api/reports', (req, res) => {
             in_lng: currentCheckIn.longitude,
             out_lat: null,
             out_lng: null,
-            worked_minutes: 0
+            worked_minutes: 0,
+            is_manual: currentCheckIn.status === 'APPROVED_MANUAL'
           });
         }
 
-        // Mola Süresi Hesabı (Oturumlar arası geçen süreler)
         for (let i = 0; i < sessions.length - 1; i++) {
           if (sessions[i].check_out && sessions[i + 1].check_in) {
             const prevOut = new Date(sessions[i].check_out.replace(' ', 'T'));
@@ -316,28 +337,27 @@ app.get('/api/reports', (req, res) => {
           }
         }
 
-        // İlk Giriş ve Son Çıkış
         const firstCheckIn = logs.find(l => l.type === 'CHECK_IN');
         const lastCheckOut = logs.slice().reverse().find(l => l.type === 'CHECK_OUT');
 
         let lateMinutes = 0;
         let earlyExitMinutes = 0;
 
-        if (firstCheckIn) {
+        if (firstCheckIn && !isExcused) {
           const inTime = new Date(firstCheckIn.timestamp.replace(' ', 'T'));
           const shiftStart = new Date(inTime);
-          shiftStart.setHours(9, 0, 0, 0); // 09:00 Mesai Başlangıcı
+          shiftStart.setHours(9, 0, 0, 0);
 
           if (inTime > shiftStart) {
             const diff = Math.floor((inTime - shiftStart) / 60000);
-            if (diff > 15) lateMinutes = diff; // 15 dk tolerans
+            if (diff > 15) lateMinutes = diff;
           }
         }
 
-        if (lastCheckOut) {
+        if (lastCheckOut && !isExcused) {
           const outTime = new Date(lastCheckOut.timestamp.replace(' ', 'T'));
           const shiftEnd = new Date(outTime);
-          shiftEnd.setHours(18, 0, 0, 0); // 18:00 Mesai Bitimi
+          shiftEnd.setHours(18, 0, 0, 0);
 
           if (outTime < shiftEnd) {
             earlyExitMinutes = Math.floor((shiftEnd - outTime) / 60000);
@@ -354,6 +374,7 @@ app.get('/api/reports', (req, res) => {
           total_break_minutes: totalBreakMinutes,
           late_minutes: lateMinutes,
           early_exit_minutes: earlyExitMinutes,
+          is_excused: isExcused,
           sessions_count: sessions.length,
           sessions: sessions,
           movements: logs
